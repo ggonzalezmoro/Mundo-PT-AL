@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+models/
+*.db
+*.db-wal
+*.db-shm
+*.log
+.pytest_cache/
+# Nunca subir documentos reales de alumnos
+*.docx
+!tests/**/*.docx

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mundo PT-AL</title>
+  <link rel="icon" href="/static/logo.png">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <aside class="lateral">
+    <div class="marca">
+      <img src="/static/logo.png" alt="Colegio San Ignacio de Loyola">
+      <div>
+        <strong>Mundo PT-AL</strong>
+        <span>Colegio San Ignacio de Loyola</span>
+      </div>
+    </div>
+    <nav>
+      <a href="#/alumnos" data-nav="alumnos"><span class="ico">👧</span>Alumnos y ACIs</a>
+      <a href="#/horario" data-nav="horario"><span class="ico">🗓️</span>Mi horario</a>
+      <a href="#/agenda" data-nav="agenda"><span class="ico">✅</span>Agenda de sesiones</a>
+      <a href="#/ajustes" data-nav="ajustes"><span class="ico">⚙️</span>Ajustes</a>
+    </nav>
+    <div class="pie-lateral">Datos guardados solo en este equipo</div>
+  </aside>
+  <main id="vista" tabindex="-1"></main>
+  <div id="avisos" aria-live="polite"></div>
+  <dialog id="dialogo"></dialog>
+  <script src="/static/app.js"></script>
+</body>
+</html>

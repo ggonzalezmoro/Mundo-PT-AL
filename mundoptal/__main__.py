@@ -1,0 +1,84 @@
+"""Arranque de la aplicación de escritorio.
+
+1. Levanta la API local en 127.0.0.1 (un puerto libre, nunca accesible desde la red).
+2. Abre una ventana nativa de Windows (pywebview + Edge WebView2).
+   Si la ventana nativa no está disponible, abre el navegador predeterminado.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import socket
+import sys
+import threading
+import time
+import webbrowser
+
+from werkzeug.serving import make_server
+
+from .config import APP_NAME, APP_VERSION, data_dir, db_path
+from .servidor import crear_app
+
+
+def _puerto_libre() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _configurar_log():
+    logging.basicConfig(
+        filename=str(data_dir() / "mundo_ptal.log"),
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    _configurar_log()
+    app = crear_app(db_path())
+    puerto = int(os.environ.get("MUNDOPTAL_PORT", 0)) or _puerto_libre()
+    servidor = make_server("127.0.0.1", puerto, app, threaded=True)
+    hilo = threading.Thread(target=servidor.serve_forever, daemon=True)
+    hilo.start()
+    url = f"http://127.0.0.1:{puerto}/"
+    logging.info("%s %s escuchando en %s", APP_NAME, APP_VERSION, url)
+
+    if "--navegador" in argv or "--servidor" in argv:
+        if "--navegador" in argv:
+            webbrowser.open(url)
+        if sys.stdout:
+            print(f"{APP_NAME} en {url} (Ctrl+C para salir)")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        servidor.shutdown()
+        return 0
+
+    try:
+        import webview
+
+        ventana = webview.create_window(
+            f"{APP_NAME} · Colegio San Ignacio de Loyola", url,
+            width=1320, height=860, min_size=(1000, 650),
+        )
+        ventana.events.closed += lambda: servidor.shutdown()
+        webview.start(private_mode=False)
+    except Exception:
+        logging.exception("No se pudo abrir la ventana nativa; se usa el navegador")
+        webbrowser.open(url)
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+    servidor.shutdown()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
