@@ -40,6 +40,12 @@ body {
 .marca img { width: 54px; height: 48px; object-fit: contain; background: #fff; border-radius: 8px; padding: 4px; }
 .marca strong { display: block; font-size: 17px; letter-spacing: .2px; }
 .marca span { font-size: 11px; opacity: .85; }
+.perfil { display: flex; gap: 10px; align-items: center; padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.15); font-size: 13px; }
+.perfil strong { display: block; }
+.perfil span { display: block; font-size: 11px; opacity: .85; }
+.perfil a { color: #dff0c2; font-size: 11px; }
+.avatar-perfil { width: 34px; height: 34px; border-radius: 50%; background: var(--lima); display: grid; place-items: center; font-weight: 700; flex-shrink: 0; }
+.perfil-tarjeta.actual { border-color: var(--lima); box-shadow: 0 0 0 2px rgba(115,186,26,.35); }
 nav { display: flex; flex-direction: column; padding: 12px 8px; gap: 2px; }
 nav a { color: #fff; text-decoration: none; padding: 10px 12px; border-radius: 8px; display: flex; gap: 10px; align-items: center; opacity: .9; }
 nav a:hover { background: rgba(255,255,255,.1); opacity: 1; }

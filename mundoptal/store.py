@@ -18,6 +18,7 @@ JERARQUIA = {
 }
 
 CAMPOS_EDITABLES = {
+    "usuarios": {"nombre", "especialidad"},
     "alumnos": {"nombre", "curso", "observaciones", "activo"},
     "acis": {"curso", "curso_escolar", "trimestre", "titulo", "materia", "prof_area",
              "prof_ptal", "observaciones"},
@@ -105,25 +106,72 @@ class Store:
         r = self.conn.execute(sql, (id_,)).fetchone()
         return r[0] if r else None
 
+    # ------------------------------------------------------------ usuarios (perfiles)
+    def listar_usuarios(self) -> list[dict]:
+        return self.q(
+            """SELECT u.*, (SELECT COUNT(*) FROM alumnos WHERE usuario_id = u.id AND activo = 1) AS num_alumnos
+               FROM usuarios u ORDER BY u.nombre COLLATE NOCASE"""
+        )
+
+    def crear_usuario(self, nombre: str, especialidad: str = "PT/AL") -> int:
+        nombre = (nombre or "").strip()
+        if not nombre:
+            raise StoreError("El nombre del perfil es obligatorio")
+        if especialidad not in ("PT", "AL", "PT/AL"):
+            raise StoreError("Especialidad no válida (PT, AL o PT/AL)")
+        with self.tx():
+            primero = not self.conn.execute("SELECT 1 FROM usuarios").fetchone()
+            uid = self.conn.execute(
+                "INSERT INTO usuarios(nombre, especialidad) VALUES (?, ?)", (nombre, especialidad)
+            ).lastrowid
+            if primero:
+                # Los datos creados antes de existir perfiles pasan al primer perfil
+                self.conn.execute("UPDATE alumnos SET usuario_id = ? WHERE usuario_id IS NULL", (uid,))
+                self.conn.execute("UPDATE franjas SET usuario_id = ? WHERE usuario_id IS NULL", (uid,))
+            return uid
+
+    def obtener_usuario(self, usuario_id: int) -> dict | None:
+        return self.q1("SELECT * FROM usuarios WHERE id = ?", (usuario_id,))
+
+    def buscar_usuario(self, nombre: str) -> dict | None:
+        for u in self.listar_usuarios():
+            if normalizar(u["nombre"]) == normalizar(nombre):
+                return u
+        return None
+
     # ------------------------------------------------------------ alumnos
-    def listar_alumnos(self, incluir_inactivos: bool = False) -> list[dict]:
-        where = "" if incluir_inactivos else "WHERE al.activo = 1"
+    def listar_alumnos(self, usuario_id: int | None = None, incluir_inactivos: bool = False) -> list[dict]:
+        condiciones, params = [], []
+        if not incluir_inactivos:
+            condiciones.append("al.activo = 1")
+        if usuario_id is not None:
+            condiciones.append("al.usuario_id = ?")
+            params.append(usuario_id)
+        where = ("WHERE " + " AND ".join(condiciones)) if condiciones else ""
         return self.q(
             f"""SELECT al.*, (SELECT COUNT(*) FROM acis WHERE alumno_id = al.id) AS num_acis,
                        (SELECT MAX(id) FROM acis WHERE alumno_id = al.id) AS aci_vigente_id
-                FROM alumnos al {where} ORDER BY al.nombre COLLATE NOCASE"""
+                FROM alumnos al {where} ORDER BY al.nombre COLLATE NOCASE""",
+            params,
         )
 
-    def crear_alumno(self, nombre: str, curso: str = "", observaciones: str = "") -> int:
+    def crear_alumno(self, nombre: str, curso: str = "", observaciones: str = "",
+                     usuario_id: int | None = None) -> int:
         nombre = (nombre or "").strip()
         if not nombre:
             raise StoreError("El nombre del alumno es obligatorio")
         with self.lock:
             cur = self.conn.execute(
-                "INSERT INTO alumnos(nombre, curso, observaciones) VALUES (?, ?, ?)",
-                (nombre, curso or "", observaciones or ""),
+                "INSERT INTO alumnos(nombre, curso, observaciones, usuario_id) VALUES (?, ?, ?, ?)",
+                (nombre, curso or "", observaciones or "", usuario_id),
             )
             return cur.lastrowid
+
+    def buscar_alumno(self, nombre: str, usuario_id: int | None = None) -> dict | None:
+        for a in self.listar_alumnos(usuario_id, incluir_inactivos=True):
+            if normalizar(a["nombre"]) == normalizar(nombre):
+                return a
+        return None
 
     def obtener_alumno(self, alumno_id: int) -> dict | None:
         al = self.q1("SELECT * FROM alumnos WHERE id = ?", (alumno_id,))

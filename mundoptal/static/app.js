@@ -10,8 +10,15 @@ let INFO = { escala: ["NI", "I", "ED", "ED+", "C"], dias: ["Lunes", "Martes", "M
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const claseEval = (v) => (v ? "eval-" + v.replace("+", "p") : "");
 
+// Perfil activo (cada maestro ve solo sus alumnos, su horario y su agenda)
+let USUARIO = null;
+const CLAVE_PERFIL = "mundoptal.usuario";
+function leerPerfilGuardado() { try { return localStorage.getItem(CLAVE_PERFIL); } catch (e) { return null; } }
+function guardarPerfil(id) { try { localStorage.setItem(CLAVE_PERFIL, String(id)); } catch (e) { /* sin almacenamiento */ } }
+
 async function api(metodo, url, cuerpo) {
   const op = { method: metodo, headers: {} };
+  if (USUARIO) op.headers["X-Usuario"] = String(USUARIO.id);
   if (cuerpo instanceof FormData) op.body = cuerpo;
   else if (cuerpo !== undefined) { op.body = JSON.stringify(cuerpo); op.headers["Content-Type"] = "application/json"; }
   const r = await fetch(url, op);
@@ -48,10 +55,12 @@ const rutas = [
   [/^#\/horario$/, vistaHorario, "horario"],
   [/^#\/agenda(?:\/(\d{4}-\d{2}-\d{2}))?$/, vistaAgenda, "agenda"],
   [/^#\/ajustes$/, vistaAjustes, "ajustes"],
+  [/^#\/perfiles$/, vistaPerfiles, "perfiles"],
 ];
 
 async function enrutar() {
   const h = location.hash || "#/alumnos";
+  if (!USUARIO && h !== "#/perfiles") { location.hash = "#/perfiles"; return; }
   for (const [re, fn, nav] of rutas) {
     const m = h.match(re);
     if (m) {
@@ -494,7 +503,10 @@ async function vistaHorario() {
   vista.innerHTML = `
     <div class="cabecera"><div><h1>Mi horario semanal</h1>
       <p class="sub">Configura tus sesiones. En cada sesión, los ítems pendientes de la ACI de cada alumno se reparten automáticamente en la agenda.</p></div>
-      <div class="acciones"><button class="primario" id="nueva-franja">＋ Añadir franja</button></div></div>
+      <div class="acciones">
+        <label class="boton" for="importar-horario" title="Hoja de cálculo con los días en columnas y las horas en filas">📊 Importar horario (Excel o CSV)</label>
+        <input type="file" id="importar-horario" accept=".xlsx,.csv" hidden>
+        <button class="primario" id="nueva-franja">＋ Añadir franja</button></div></div>
     <div class="semana">${INFO.dias.map((d, i) => `<div class="dia"><h3>${d}</h3><div class="bloques">
       ${franjas.filter((f) => f.dia === i).map((f) => `<div class="franja ${f.tipo === "otro" ? "otro" : ""}" data-franja="${f.id}">
         <div class="hora">${f.inicio}–${f.fin} ${f.tipo === "sesion" ? `<span class="chip">${f.especialidad}</span>` : ""}</div>
@@ -504,6 +516,20 @@ async function vistaHorario() {
       </div>`).join("") || '<div class="muted" style="text-align:center;padding:20px 0">Libre</div>'}
     </div></div>`).join("")}</div>`;
   $("#nueva-franja").onclick = () => formFranja(null, alumnos);
+  $("#importar-horario").onchange = (e) => intentar(async () => {
+    const archivo = e.target.files[0];
+    if (!archivo) return;
+    const reemplazar = franjas.length > 0 && confirm("¿Quieres reemplazar tu horario actual por el del archivo?\n\nAceptar: se borra el horario actual (y sus sesiones planificadas).\nCancelar: se añaden las franjas nuevas sin tocar las que ya tienes.");
+    const fd = new FormData();
+    fd.append("archivo", archivo);
+    fd.append("reemplazar", reemplazar ? "1" : "0");
+    const r = await api("POST", "/api/horario/importar", fd);
+    let txt = `Horario importado: ${r.franjas} franjas`;
+    if (r.alumnos_nuevos.length) txt += `. Alumnos nuevos: ${r.alumnos_nuevos.join(", ")}`;
+    if (r.omitidas.length) txt += `. Omitidas por solaparse: ${r.omitidas.length}`;
+    aviso(txt);
+    vistaHorario();
+  });
   $$("[data-franja]").forEach((el) => el.onclick = () => formFranja(franjas.find((f) => f.id === +el.dataset.franja), alumnos));
 }
 
@@ -613,6 +639,69 @@ function htmlSesion(s) {
     </div></div>`;
 }
 
+// ======================================================================= perfiles
+const NOMBRE_ESP = { PT: "Pedagogía Terapéutica", AL: "Audición y Lenguaje", "PT/AL": "PT y AL" };
+
+function pintarPerfilLateral() {
+  const el = $("#perfil");
+  if (!el) return;
+  el.innerHTML = USUARIO
+    ? `<div class="avatar-perfil">${esc(USUARIO.nombre[0] || "?").toUpperCase()}</div>
+       <div><strong>${esc(USUARIO.nombre)}</strong><span>${esc(NOMBRE_ESP[USUARIO.especialidad] || USUARIO.especialidad)}</span>
+       <a href="#/perfiles">Cambiar de perfil</a></div>`
+    : `<div><a href="#/perfiles">Elige tu perfil</a></div>`;
+}
+
+function elegirPerfil(u) {
+  USUARIO = u;
+  guardarPerfil(u.id);
+  pintarPerfilLateral();
+}
+
+async function vistaPerfiles() {
+  const usuarios = await api("GET", "/api/usuarios");
+  const opciones = (actual) => Object.entries(NOMBRE_ESP).map(([k, t]) => `<option value="${k}" ${k === actual ? "selected" : ""}>${t}</option>`).join("");
+  vista.innerHTML = `
+    <div class="cabecera"><div><h1>${usuarios.length ? "¿Quién eres?" : "Bienvenida a Mundo PT-AL"}</h1>
+      <p class="sub">${usuarios.length ? "Cada maestro tiene su propio perfil con sus alumnos, sus ACIs, su horario y su agenda."
+        : "Crea tu perfil para empezar. Más adelante podrán añadirse otros maestros en este mismo ordenador."}</p></div></div>
+    ${usuarios.length ? `<div class="rejilla">${usuarios.map((u) => `<div class="tarjeta alumno perfil-tarjeta ${USUARIO && USUARIO.id === u.id ? "actual" : ""}">
+      <div class="fila"><div class="avatar">${esc(u.nombre[0] || "?").toUpperCase()}</div>
+        <div><div class="nombre">${esc(u.nombre)}</div><div class="muted">${esc(NOMBRE_ESP[u.especialidad] || u.especialidad)} · ${u.num_alumnos} alumnos</div></div></div>
+      <div class="botones"><button class="primario" data-entrar="${u.id}">${USUARIO && USUARIO.id === u.id ? "Continuar" : "Entrar"}</button></div></div>`).join("")}</div>` : ""}
+    ${USUARIO ? `<form class="tarjeta" id="form-editar" style="margin-top:16px"><h2>Mi perfil</h2><div class="campos">
+      <div><label>Nombre</label><input name="nombre" value="${esc(USUARIO.nombre)}" required></div>
+      <div><label>Especialidad</label><select name="especialidad">${opciones(USUARIO.especialidad)}</select></div>
+      </div><p style="margin:12px 0 0"><button>Guardar cambios</button></p></form>` : ""}
+    <form class="tarjeta" id="form-perfil" style="margin-top:16px"><h2>${usuarios.length ? "Añadir otro perfil" : "Crear mi perfil"}</h2>
+      <div class="campos">
+        <div><label>Nombre</label><input name="nombre" required placeholder="p. ej. Fátima Rodríguez García"></div>
+        <div><label>Especialidad</label><select name="especialidad">${opciones("PT/AL")}</select></div>
+      </div>
+      <p style="margin:12px 0 0"><button class="primario">Crear perfil</button></p></form>`;
+  $$("[data-entrar]").forEach((b) => b.onclick = () => {
+    elegirPerfil(usuarios.find((u) => u.id === +b.dataset.entrar));
+    location.hash = "#/alumnos";
+  });
+  $("#form-perfil").onsubmit = (e) => intentar(async () => {
+    e.preventDefault();
+    const datos = Object.fromEntries(new FormData(e.target));
+    const { id } = await api("POST", "/api/usuarios", datos);
+    elegirPerfil({ id, ...datos });
+    aviso("Perfil creado");
+    location.hash = "#/alumnos";
+  });
+  const fe = $("#form-editar");
+  if (fe) fe.onsubmit = (e) => intentar(async () => {
+    e.preventDefault();
+    const datos = Object.fromEntries(new FormData(fe));
+    await api("PATCH", `/api/usuarios/${USUARIO.id}`, datos);
+    elegirPerfil({ ...USUARIO, ...datos });
+    aviso("Perfil guardado");
+    vistaPerfiles();
+  });
+}
+
 // ======================================================================= ajustes
 async function vistaAjustes() {
   const voz = await api("GET", "/api/voz");
@@ -633,5 +722,12 @@ async function vistaAjustes() {
 // ======================================================================= inicio
 (async () => {
   try { INFO = await api("GET", "/api/info"); } catch (e) { /* valores por defecto */ }
+  try {
+    const usuarios = await api("GET", "/api/usuarios");
+    const guardado = leerPerfilGuardado();
+    USUARIO = usuarios.find((u) => String(u.id) === guardado) || (usuarios.length === 1 ? usuarios[0] : null);
+    if (USUARIO) guardarPerfil(USUARIO.id);
+  } catch (e) { /* sin perfiles */ }
+  pintarPerfilLateral();
   enrutar();
 })();

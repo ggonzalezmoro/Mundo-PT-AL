@@ -35,9 +35,57 @@ def _configurar_log():
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 
+def _valor(argv: list[str], opcion: str) -> str | None:
+    if opcion in argv:
+        i = argv.index(opcion)
+        if i + 1 < len(argv):
+            return argv[i + 1]
+    return None
+
+
+def configurar_desde_consola(argv: list[str]) -> int:
+    """Alta de un perfil e importación de su horario sin abrir la ventana:
+
+    MundoPTAL --perfil "Fátima" --especialidad PT/AL --importar-horario horario.xlsx [--reemplazar]
+    """
+    from pathlib import Path
+
+    from . import horario
+    from .planificador import Planificador
+    from .store import Store
+
+    store = Store(db_path())
+    nombre = _valor(argv, "--perfil")
+    especialidad = _valor(argv, "--especialidad") or "PT/AL"
+    usuario = store.buscar_usuario(nombre)
+    if usuario:
+        uid = usuario["id"]
+        store.actualizar("usuarios", uid, {"especialidad": especialidad})
+        mensaje = [f"Perfil existente: {usuario['nombre']} ({especialidad})"]
+    else:
+        uid = store.crear_usuario(nombre, especialidad)
+        mensaje = [f"Perfil creado: {nombre} ({especialidad})"]
+    archivo = _valor(argv, "--importar-horario")
+    if archivo:
+        ruta = Path(archivo)
+        franjas = horario.analizar_tabla(horario.leer_tabla(ruta.name, ruta.read_bytes()))
+        r = horario.importar_horario(store, Planificador(store), uid, franjas, "--reemplazar" in argv)
+        mensaje.append(f"Franjas importadas: {r['franjas']}")
+        mensaje.append("Alumnos nuevos: " + (", ".join(r["alumnos_nuevos"]) or "ninguno"))
+        if r["omitidas"]:
+            mensaje.append("Omitidas: " + "; ".join(r["omitidas"]))
+    texto = "\n".join(mensaje)
+    logging.info(texto)
+    if sys.stdout:
+        print(texto)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     _configurar_log()
+    if _valor(argv, "--perfil"):
+        return configurar_desde_consola(argv)
     app = crear_app(db_path())
     puerto = int(os.environ.get("MUNDOPTAL_PORT", 0)) or _puerto_libre()
     servidor = make_server("127.0.0.1", puerto, app, threaded=True)

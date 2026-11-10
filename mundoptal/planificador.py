@@ -38,8 +38,11 @@ class Planificador:
         self.s = store
 
     # ------------------------------------------------------------ horario
-    def listar_franjas(self) -> list[dict]:
-        franjas = self.s.q("SELECT * FROM franjas ORDER BY dia, inicio, id")
+    def listar_franjas(self, usuario_id: int | None = None) -> list[dict]:
+        if usuario_id is None:
+            franjas = self.s.q("SELECT * FROM franjas ORDER BY dia, inicio, id")
+        else:
+            franjas = self.s.q("SELECT * FROM franjas WHERE usuario_id = ? ORDER BY dia, inicio, id", (usuario_id,))
         rel = self.s.q(
             """SELECT fa.franja_id, al.id, al.nombre FROM franja_alumnos fa
                JOIN alumnos al ON al.id = fa.alumno_id ORDER BY al.nombre"""
@@ -51,7 +54,7 @@ class Planificador:
             f["alumnos"] = por_franja.get(f["id"], [])
         return franjas
 
-    def guardar_franja(self, datos: dict, franja_id: int | None = None) -> int:
+    def guardar_franja(self, datos: dict, franja_id: int | None = None, usuario_id: int | None = None) -> int:
         dia = int(datos.get("dia", -1))
         inicio, fin = str(datos.get("inicio", "")), str(datos.get("fin", ""))
         if not 0 <= dia <= 4:
@@ -67,12 +70,17 @@ class Planificador:
         especialidad = datos.get("especialidad", "PT/AL")
         n_items = max(1, min(10, int(datos.get("items_por_sesion", 3) or 3)))
         alumnos = [int(a) for a in datos.get("alumnos", [])]
+        if tipo not in ("sesion", "otro"):
+            raise StoreError("Tipo de franja no válido")
+        if especialidad not in ("PT", "AL", "PT/AL"):
+            raise StoreError("Especialidad no válida")
         valores = (dia, inicio, fin, tipo, datos.get("etiqueta", ""), especialidad, n_items)
         with self.s.tx() as c:
             # Solapes con otras franjas del mismo día
             solape = c.execute(
-                "SELECT id FROM franjas WHERE dia = ? AND inicio < ? AND fin > ? AND id IS NOT ?",
-                (dia, fin, inicio, franja_id),
+                """SELECT id FROM franjas WHERE dia = ? AND inicio < ? AND fin > ? AND id IS NOT ?
+                   AND usuario_id IS ?""",
+                (dia, fin, inicio, franja_id, usuario_id),
             ).fetchone()
             if solape:
                 raise StoreError("La franja se solapa con otra del mismo día")
@@ -83,8 +91,8 @@ class Planificador:
                 c.execute("DELETE FROM franja_alumnos WHERE franja_id = ?", (franja_id,))
             else:
                 franja_id = c.execute(
-                    """INSERT INTO franjas(dia, inicio, fin, tipo, etiqueta, especialidad, items_por_sesion)
-                       VALUES (?,?,?,?,?,?,?)""", valores).lastrowid
+                    """INSERT INTO franjas(dia, inicio, fin, tipo, etiqueta, especialidad, items_por_sesion, usuario_id)
+                       VALUES (?,?,?,?,?,?,?,?)""", (*valores, usuario_id)).lastrowid
             for a in alumnos:
                 c.execute("INSERT OR IGNORE INTO franja_alumnos VALUES (?, ?)", (franja_id, a))
         return franja_id
@@ -148,7 +156,8 @@ class Planificador:
         return elegidos
 
     # ------------------------------------------------------------ planificación
-    def planificar(self, desde: str, hasta: str, replanificar: bool = False) -> dict:
+    def planificar(self, desde: str, hasta: str, replanificar: bool = False,
+                   usuario_id: int | None = None) -> dict:
         """Crea sesiones entre dos fechas (incluidas) y les asigna ítems pendientes.
         Las sesiones ya realizadas o canceladas no se tocan. Las planificadas
         solo se rehacen si `replanificar` es True."""
@@ -157,7 +166,7 @@ class Planificador:
             raise StoreError("La fecha final es anterior a la inicial")
         if (d1 - d0).days > 120:
             raise StoreError("Planifica como máximo 4 meses de una vez")
-        franjas = [f for f in self.listar_franjas() if f["tipo"] == "sesion"]
+        franjas = [f for f in self.listar_franjas(usuario_id) if f["tipo"] == "sesion"]
         res = {"sesiones": 0, "items": 0, "sin_pendientes": []}
         d = d0
         while d <= d1:
@@ -200,14 +209,18 @@ class Planificador:
                 res["items"] += 1
 
     # ------------------------------------------------------------ agenda
-    def agenda(self, desde: str, hasta: str) -> list[dict]:
+    def agenda(self, desde: str, hasta: str, usuario_id: int | None = None) -> list[dict]:
+        filtro, params = "", [desde, hasta]
+        if usuario_id is not None:
+            filtro = "AND f.usuario_id = ?"
+            params.append(usuario_id)
         sesiones = self.s.q(
-            """SELECT se.*, f.inicio, f.fin, f.etiqueta, f.especialidad, f.dia,
+            f"""SELECT se.*, f.inicio, f.fin, f.etiqueta, f.especialidad, f.dia,
                       al.nombre AS alumno, (SELECT MAX(id) FROM acis WHERE alumno_id = al.id) AS aci_id
                FROM sesiones se JOIN franjas f ON f.id = se.franja_id
                JOIN alumnos al ON al.id = se.alumno_id
-               WHERE se.fecha BETWEEN ? AND ? ORDER BY se.fecha, f.inicio, al.nombre""",
-            (desde, hasta),
+               WHERE se.fecha BETWEEN ? AND ? {filtro} ORDER BY se.fecha, f.inicio, al.nombre""",
+            params,
         )
         if not sesiones:
             return []

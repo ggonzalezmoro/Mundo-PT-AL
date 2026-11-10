@@ -4,12 +4,20 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     clave TEXT PRIMARY KEY,
     valor TEXT
+);
+
+-- Perfiles de los maestros que usan la aplicación en este equipo
+CREATE TABLE IF NOT EXISTS usuarios (
+    id INTEGER PRIMARY KEY,
+    nombre TEXT NOT NULL,
+    especialidad TEXT NOT NULL DEFAULT 'PT/AL' CHECK (especialidad IN ('PT', 'AL', 'PT/AL')),
+    creado TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS alumnos (
@@ -18,6 +26,7 @@ CREATE TABLE IF NOT EXISTS alumnos (
     curso TEXT DEFAULT '',
     observaciones TEXT DEFAULT '',
     activo INTEGER NOT NULL DEFAULT 1,
+    usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
     creado TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -90,7 +99,8 @@ CREATE TABLE IF NOT EXISTS franjas (
     tipo TEXT NOT NULL DEFAULT 'sesion' CHECK (tipo IN ('sesion', 'otro')),
     etiqueta TEXT DEFAULT '',
     especialidad TEXT NOT NULL DEFAULT 'PT/AL' CHECK (especialidad IN ('PT', 'AL', 'PT/AL')),
-    items_por_sesion INTEGER NOT NULL DEFAULT 3
+    items_por_sesion INTEGER NOT NULL DEFAULT 3,
+    usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS franja_alumnos (
@@ -118,6 +128,8 @@ CREATE TABLE IF NOT EXISTS sesion_items (
 );
 
 CREATE INDEX IF NOT EXISTS ix_acis_alumno ON acis(alumno_id);
+CREATE INDEX IF NOT EXISTS ix_alumnos_usuario ON alumnos(usuario_id);
+CREATE INDEX IF NOT EXISTS ix_franjas_usuario ON franjas(usuario_id);
 CREATE INDEX IF NOT EXISTS ix_areas_aci ON areas(aci_id);
 CREATE INDEX IF NOT EXISTS ix_sub_area ON subareas(area_id);
 CREATE INDEX IF NOT EXISTS ix_comp_sub ON competencias(subarea_id);
@@ -132,12 +144,25 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    _migrar(conn)
     conn.executescript(SCHEMA)
     conn.execute(
         "INSERT OR IGNORE INTO meta(clave, valor) VALUES ('schema_version', ?)",
         (str(SCHEMA_VERSION),),
     )
     return conn
+
+
+def _migrar(conn: sqlite3.Connection) -> None:
+    """Actualiza bases de datos creadas con versiones anteriores sin perder datos."""
+    tablas = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    for tabla in ("alumnos", "franjas"):
+        if tabla in tablas:
+            cols = {r[1] for r in conn.execute(f"PRAGMA table_info({tabla})")}
+            if "usuario_id" not in cols:
+                conn.execute(f"ALTER TABLE {tabla} ADD COLUMN usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE")
+    if "meta" in tablas:
+        conn.execute("UPDATE meta SET valor = ? WHERE clave = 'schema_version'", (str(SCHEMA_VERSION),))
 
 
 def rows(cur) -> list[dict]:

@@ -12,7 +12,7 @@ hiddenimports = []
 if Path("models").exists():
     datas.append(("models", "models"))
 
-for paquete in ("vosk", "_sounddevice_data", "webview", "docx"):
+for paquete in ("vosk", "_sounddevice_data", "webview", "docx", "openpyxl"):
     try:
         d, b, h = collect_all(paquete)
         datas += d

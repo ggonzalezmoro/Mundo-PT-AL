@@ -34,6 +34,7 @@ y que no dependa de nada instalado en el equipo salvo Windows 10/11.
 
 ## Modelo de datos
 
+- `usuarios` (perfil: nombre, especialidad PT/AL/PT-AL) 1─N `alumnos` y 1─N `franjas`. La interfaz envía la cabecera `X-Usuario`; con un único perfil se usa ese. Al crear el primer perfil hereda los alumnos y franjas anteriores (migración desde la v0.1, `schema_version` 2).
 - `alumnos` 1─N `acis` (la más reciente es la **vigente**, la que usa la agenda).
 - `acis` 1─N `adaptaciones` (tabla de tipos de adaptaciones).
 - `acis` 1─N `areas` 1─N `subareas` 1─N `competencias` 1─N `items`.

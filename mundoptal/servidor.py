@@ -8,7 +8,7 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import dictado
+from . import dictado, horario
 from .config import APP_NAME, APP_VERSION, COLEGIO, DIAS, ESCALA, ESCALA_TEXTO, data_dir, static_dir
 from .planificador import Planificador, lunes_de
 from .store import Store, StoreError
@@ -26,6 +26,19 @@ def crear_app(db_path: str | Path) -> Flask:
 
     def cuerpo() -> dict:
         return request.get_json(silent=True) or {}
+
+    def usuario_actual() -> int | None:
+        """Perfil activo, enviado por la interfaz en la cabecera X-Usuario.
+        Si todavía no hay perfiles, se trabaja sin filtrar (compatibilidad)."""
+        valor = request.headers.get("X-Usuario", "")
+        if valor.isdigit() and store.obtener_usuario(int(valor)):
+            return int(valor)
+        usuarios = store.listar_usuarios()
+        if not usuarios:
+            return None
+        if len(usuarios) == 1:
+            return usuarios[0]["id"]
+        raise StoreError("Elige primero tu perfil")
 
     @app.errorhandler(StoreError)
     def _error_datos(e):
@@ -50,15 +63,26 @@ def crear_app(db_path: str | Path) -> Flask:
                        escala_texto=ESCALA_TEXTO, dias=DIAS, datos=str(Path(db_path).parent),
                        hoy=dt.date.today().isoformat())
 
+    # ------------------------------------------------------------ perfiles
+    @app.get("/api/usuarios")
+    def usuarios():
+        return jsonify(store.listar_usuarios())
+
+    @app.post("/api/usuarios")
+    def crear_usuario():
+        d = cuerpo()
+        return jsonify(id=store.crear_usuario(d.get("nombre", ""), d.get("especialidad", "PT/AL")))
+
     # ------------------------------------------------------------ alumnos
     @app.get("/api/alumnos")
     def alumnos():
-        return jsonify(store.listar_alumnos(request.args.get("todos") == "1"))
+        return jsonify(store.listar_alumnos(usuario_actual(), request.args.get("todos") == "1"))
 
     @app.post("/api/alumnos")
     def crear_alumno():
         d = cuerpo()
-        return jsonify(id=store.crear_alumno(d.get("nombre", ""), d.get("curso", ""), d.get("observaciones", "")))
+        return jsonify(id=store.crear_alumno(d.get("nombre", ""), d.get("curso", ""), d.get("observaciones", ""),
+                                             usuario_actual()))
 
     @app.get("/api/alumnos/<int:id_>")
     def alumno(id_):
@@ -133,10 +157,10 @@ def crear_app(db_path: str | Path) -> Flask:
             raise StoreError(f"No se pudo leer el documento: {e}") from None
         alumno_id = request.form.get("alumno_id", type=int)
         if not alumno_id:
+            uid = usuario_actual()
             nombre = datos.get("alumno_nombre") or Path(f.filename or "Alumno").stem
-            existente = next((a for a in store.listar_alumnos(True)
-                              if a["nombre"].strip().lower() == nombre.strip().lower()), None)
-            alumno_id = existente["id"] if existente else store.crear_alumno(nombre, datos.get("curso", ""))
+            existente = store.buscar_alumno(nombre, uid)
+            alumno_id = existente["id"] if existente else store.crear_alumno(nombre, datos.get("curso", ""), usuario_id=uid)
         campos = {k: datos[k] for k in ("curso", "curso_escolar", "trimestre", "prof_area", "prof_ptal", "observaciones") if datos.get(k)}
         if datos.get("materia"):
             campos["materia"] = datos["materia"]
@@ -172,15 +196,27 @@ def crear_app(db_path: str | Path) -> Flask:
     # ------------------------------------------------------------ horario y agenda
     @app.get("/api/franjas")
     def franjas():
-        return jsonify(plan.listar_franjas())
+        return jsonify(plan.listar_franjas(usuario_actual()))
 
     @app.post("/api/franjas")
     def crear_franja():
-        return jsonify(id=plan.guardar_franja(cuerpo()))
+        return jsonify(id=plan.guardar_franja(cuerpo(), usuario_id=usuario_actual()))
 
     @app.put("/api/franjas/<int:id_>")
     def editar_franja(id_):
-        return jsonify(id=plan.guardar_franja(cuerpo(), id_))
+        return jsonify(id=plan.guardar_franja(cuerpo(), id_, usuario_id=usuario_actual()))
+
+    @app.post("/api/horario/importar")
+    def importar_horario():
+        f = request.files.get("archivo")
+        if not f:
+            raise StoreError("No se ha recibido ningún archivo")
+        uid = usuario_actual()
+        if uid is None:
+            raise StoreError("Crea primero tu perfil para importar el horario")
+        franjas_leidas = horario.analizar_tabla(horario.leer_tabla(f.filename or "", f.read()))
+        return jsonify(horario.importar_horario(store, plan, uid, franjas_leidas,
+                                                request.form.get("reemplazar") == "1"))
 
     @app.delete("/api/franjas/<int:id_>")
     def borrar_franja(id_):
@@ -192,13 +228,13 @@ def crear_app(db_path: str | Path) -> Flask:
         d = cuerpo()
         desde = d.get("desde") or lunes_de(dt.date.today()).isoformat()
         hasta = d.get("hasta") or (dt.date.fromisoformat(desde) + dt.timedelta(days=4)).isoformat()
-        return jsonify(plan.planificar(desde, hasta, bool(d.get("replanificar"))))
+        return jsonify(plan.planificar(desde, hasta, bool(d.get("replanificar")), usuario_actual()))
 
     @app.get("/api/agenda")
     def agenda():
         desde = request.args.get("desde") or lunes_de(dt.date.today()).isoformat()
         hasta = request.args.get("hasta") or (dt.date.fromisoformat(desde) + dt.timedelta(days=4)).isoformat()
-        return jsonify(desde=desde, hasta=hasta, sesiones=plan.agenda(desde, hasta))
+        return jsonify(desde=desde, hasta=hasta, sesiones=plan.agenda(desde, hasta, usuario_actual()))
 
     @app.get("/api/alumnos/<int:alumno_id>/pendientes")
     def pendientes(alumno_id):
