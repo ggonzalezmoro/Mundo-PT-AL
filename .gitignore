@@ -12,3 +12,6 @@ models/
 # Nunca subir documentos reales de alumnos
 *.docx
 !tests/**/*.docx
+# Nunca subir horarios ni hojas con nombres de alumnos
+*.csv
+*.xlsx
