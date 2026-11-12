@@ -4,11 +4,12 @@ from __future__ import annotations
 import datetime as dt
 import re
 import sqlite3
+import tempfile
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import dictado, horario, informes
+from . import actualizador, db as basedatos, dictado, horario, informes
 from .config import APP_NAME, APP_VERSION, COLEGIO, DIAS, ESCALA, ESCALA_TEXTO, data_dir, static_dir
 from .planificador import Planificador, lunes_de
 from .store import Store, StoreError
@@ -42,6 +43,10 @@ def crear_app(db_path: str | Path) -> Flask:
 
     @app.errorhandler(StoreError)
     def _error_datos(e):
+        return jsonify(error=str(e)), 400
+
+    @app.errorhandler(actualizador.ErrorActualizacion)
+    def _error_actualizacion(e):
         return jsonify(error=str(e)), 400
 
     @app.errorhandler(RuntimeError)
@@ -142,15 +147,18 @@ def crear_app(db_path: str | Path) -> Flask:
         nombre = re.sub(r"[^\w\-]+", "_", f"ACI_{aci['alumno_nombre']}_{aci['trimestre']}T").strip("_")
         return enviar_docx(nombre, exportar_aci(aci))
 
+    def carpeta_documentos() -> Path:
+        destino = Path.home() / "Documents"
+        if not destino.exists():
+            destino = Path.home()
+        destino = destino / "Mundo PT-AL"
+        destino.mkdir(parents=True, exist_ok=True)
+        return destino
+
     def enviar_docx(nombre, datos):
         if request.args.get("guardar") == "1":
             # Guardar directamente en Documentos (la ventana nativa no siempre permite descargas)
-            destino = Path.home() / "Documents"
-            if not destino.exists():
-                destino = Path.home()
-            destino = destino / "Mundo PT-AL"
-            destino.mkdir(parents=True, exist_ok=True)
-            ruta = destino / f"{nombre}.docx"
+            ruta = carpeta_documentos() / f"{nombre}.docx"
             ruta.write_bytes(datos)
             return jsonify(ruta=str(ruta))
         return Response(
@@ -314,15 +322,76 @@ def crear_app(db_path: str | Path) -> Flask:
         return jsonify(ok=True)
 
     # ------------------------------------------------------------ copia de seguridad
-    @app.post("/api/copia-seguridad")
-    def copia():
+    def volcar(ruta: Path) -> Path:
+        destino_db = sqlite3.connect(str(ruta))
+        try:
+            with store.lock:
+                store.conn.backup(destino_db)
+        finally:
+            destino_db.close()
+        return ruta
+
+    def copia_interna(motivo: str = "") -> Path:
         destino = data_dir() / "copias"
         destino.mkdir(exist_ok=True)
-        ruta = destino / f"mundo_ptal_{dt.datetime.now():%Y%m%d_%H%M%S}.db"
-        destino_db = sqlite3.connect(str(ruta))
-        with store.lock:
-            store.conn.backup(destino_db)
-        destino_db.close()
-        return jsonify(ruta=str(ruta))
+        return volcar(destino / f"mundo_ptal_{dt.datetime.now():%Y%m%d_%H%M%S}{motivo}.db")
+
+    @app.post("/api/copia-seguridad")
+    def copia():
+        return jsonify(ruta=str(copia_interna()))
+
+    # ------------------------------------------------------------ pasar los datos a otro ordenador
+    @app.get("/api/datos/exportar")
+    def exportar_datos():
+        nombre = f"MundoPTAL_datos_{dt.datetime.now():%Y-%m-%d_%H%M}.db"
+        if request.args.get("guardar") == "1":
+            return jsonify(ruta=str(volcar(carpeta_documentos() / nombre)))
+        with tempfile.TemporaryDirectory() as tmp:
+            datos = volcar(Path(tmp) / nombre).read_bytes()
+        return Response(datos, mimetype="application/octet-stream",
+                        headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+
+    @app.post("/api/datos/importar")
+    def importar_datos():
+        archivo = request.files.get("archivo")
+        if not archivo:
+            raise StoreError("Elige el archivo de datos (.db) que quieres cargar")
+        with tempfile.TemporaryDirectory() as tmp:
+            ruta = Path(tmp) / "importado.db"
+            archivo.save(str(ruta))
+            prueba = sqlite3.connect(str(ruta))
+            try:
+                version = prueba.execute("SELECT valor FROM meta WHERE clave = 'schema_version'").fetchone()
+                bien = prueba.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            except sqlite3.DatabaseError:
+                version, bien = None, False
+            finally:
+                prueba.close()  # en Windows, si no se cierra, no se puede borrar la carpeta temporal
+            if not version or not bien:
+                raise StoreError("Ese archivo no es una copia de datos de Mundo PT-AL")
+            if int(version[0]) > basedatos.SCHEMA_VERSION:
+                raise StoreError("Esos datos son de una versión más nueva del programa. Actualiza primero.")
+            # Pone al día el archivo si viene de una versión anterior
+            origen = basedatos.connect(ruta)
+            try:
+                previa = copia_interna("_antes_de_importar")
+                with store.lock:
+                    origen.backup(store.conn)
+            finally:
+                origen.close()
+        usuarios = store.listar_usuarios()
+        return jsonify(ok=True, copia_previa=str(previa), usuarios=len(usuarios),
+                       alumnos=store.q1("SELECT COUNT(*) AS n FROM alumnos")["n"])
+
+    # ------------------------------------------------------------ actualizaciones
+    @app.get("/api/actualizacion")
+    def buscar_actualizacion():
+        return jsonify(actualizador.comprobar())
+
+    @app.post("/api/actualizacion/instalar")
+    def instalar_actualizacion():
+        url = cuerpo().get("url") or actualizador.comprobar().get("url")
+        copia_interna(f"_antes_de_{APP_VERSION}")
+        return jsonify(actualizador.instalar(url))
 
     return app

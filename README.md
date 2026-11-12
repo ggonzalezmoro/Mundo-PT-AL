@@ -7,7 +7,7 @@ Colegio San Ignacio de Loyola.
 Todo funciona **en el propio ordenador del maestro**: no hay nube, no hace falta
 Internet y los datos de los alumnos nunca salen del equipo.
 
-## Qué hace (versión 0.3)
+## Qué hace (versión 0.4)
 
 | Módulo | Qué permite |
 |---|---|
@@ -19,6 +19,8 @@ Internet y los datos de los alumnos nunca salen del equipo.
 | **Mi horario** | Configurar las franjas semanales del maestro (día, hora, PT/AL, alumnos, ítems por sesión) o **importarlas** desde una hoja de cálculo (`.xlsx` o `.csv`) con los días en columnas y las horas en filas. |
 | **Agenda de sesiones** | Planificación automática: los ítems **no conseguidos** de la ACI vigente de cada alumno se reparten en sus sesiones, rotando para que todos se trabajen. Desde la agenda se marca lo trabajado y se evalúa; un ítem que pasa a **C** deja de planificarse. |
 | **Informes a familias** | Informe descriptivo trimestral por alumno con el formato de «Observaciones y comentarios» de las ACIs: cómo se ha mostrado, actitud en las sesiones de PT y de AL, evolución en cada área (con un borrador hecho a partir de las evaluaciones de la ACI), cierre, despedida y firmas. Se exporta a Word y se incluye también al final de la ACI de ese trimestre. |
+| **Actualizaciones** | En *Ajustes › Actualizaciones* se comprueba si hay una versión nueva publicada en GitHub y se instala con un botón: el programa se cierra, se sustituye y se vuelve a abrir. Los datos no se tocan (antes se hace una copia de seguridad). Al abrir, avisa si hay versión nueva. |
+| **Pasar datos a otro ordenador** | *Ajustes › Exportar mis datos* guarda un archivo `.db` en Documentos › Mundo PT-AL; en el otro ordenador, *Importar datos* lo carga (sustituye los datos de ese ordenador). No hay sincronización. |
 
 ## Uso diario
 
@@ -75,5 +77,17 @@ Otras opciones: `python -m mundoptal --navegador` (abre en el navegador) y
 
 Cada `push` a `main` construye el ejecutable en GitHub Actions; al crear una
 etiqueta `v*` se publica como *Release*.
+
+### Publicar una versión nueva (para el botón «Actualizar»)
+
+1. Sube `APP_VERSION` en `mundoptal/config.py` (por ejemplo `0.4.0` → `0.5.0`).
+2. `git commit` y `git push` a `main`.
+3. `git tag v0.5.0` y `git push origin v0.5.0`.
+
+GitHub Actions comprueba que la etiqueta coincide con `APP_VERSION`, construye
+el `.zip` y lo publica como *Release*. Las aplicaciones instaladas lo detectan
+en *Ajustes › Actualizaciones*. El repositorio tiene que ser **público** para
+que las aplicaciones puedan descargar la versión sin credenciales (por eso el
+repositorio no debe contener nunca datos de alumnos).
 
 Arquitectura: ver [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md).

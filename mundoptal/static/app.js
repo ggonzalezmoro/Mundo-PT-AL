@@ -826,11 +826,83 @@ async function vistaAjustes() {
       <p><code>${esc(INFO.datos)}</code></p>
       <p><button class="primario" id="copia">💾 Hacer copia de seguridad ahora</button></p>
       <p class="muted">Las copias se guardan en la subcarpeta «copias». Puedes llevarlas a un pendrive para no perder nada si cambias de ordenador.</p></div>
+    <div class="tarjeta" id="tarjeta-actualizacion"><h2>Actualizaciones</h2>
+      <p>Versión instalada: <strong>${esc(INFO.version)}</strong></p>
+      <div id="estado-actualizacion" class="muted">Pulsa el botón para ver si hay una versión nueva.</div>
+      <p><button id="buscar-act">🔄 Buscar actualizaciones</button></p>
+      <p class="muted">Al actualizar, el programa se cierra, se instala la versión nueva y se vuelve a abrir. Tus datos no se tocan, y antes se hace una copia de seguridad.</p></div>
+    <div class="tarjeta"><h2>Pasar los datos a otro ordenador</h2>
+      <p>Sirve para empezar a usar el programa en otro ordenador con los mismos alumnos, ACIs, horarios e informes. Los datos <strong>no se sincronizan</strong>: a partir de ese momento cada ordenador tiene los suyos.</p>
+      <p><button id="exportar-datos">📤 Exportar mis datos</button>
+        <label class="boton" for="importar-datos">📥 Importar datos de otro ordenador</label>
+        <input type="file" id="importar-datos" accept=".db" hidden></p>
+      <p class="muted">«Exportar» guarda un archivo .db en Documentos › Mundo PT-AL. Llévalo al otro ordenador y allí pulsa «Importar». Importar <strong>sustituye</strong> todos los datos de ese ordenador (antes se guarda una copia de seguridad).</p></div>
     <div class="tarjeta"><h2>Dictado por voz</h2>
       ${voz.disponible ? `<p>✅ Dictado sin conexión disponible (el audio no sale del ordenador).</p>`
         : `<p>⚠️ ${esc(voz.motivo)}</p><p class="muted">Mientras tanto puedes usar el dictado de Windows: haz clic en el cuadro de texto y pulsa <strong>Windows + H</strong>.</p>`}
     </div>`;
   $("#copia").onclick = () => intentar(async () => { const r = await api("POST", "/api/copia-seguridad"); aviso("Copia guardada en " + r.ruta); });
+  $("#buscar-act").onclick = () => buscarActualizacion(true);
+  if (ACTUALIZACION) pintarActualizacion(ACTUALIZACION);
+  $("#exportar-datos").onclick = () => intentar(async () => {
+    if (window.pywebview) {
+      const r = await api("GET", "/api/datos/exportar?guardar=1");
+      aviso("Datos guardados en " + r.ruta);
+    } else {
+      location.href = "/api/datos/exportar";
+    }
+  });
+  $("#importar-datos").onchange = (e) => intentar(async () => {
+    const f = e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!confirm("Se sustituirán TODOS los datos de este ordenador por los del archivo «" + f.name + "». Antes se hará una copia de seguridad. ¿Seguir?")) return;
+    const fd = new FormData();
+    fd.append("archivo", f);
+    const r = await api("POST", "/api/datos/importar", fd);
+    alert(`Datos importados: ${r.usuarios} perfil(es) y ${r.alumnos} alumno(s).\nSi necesitas volver atrás, la copia anterior está en:\n${r.copia_previa}`);
+    try { localStorage.removeItem(CLAVE_PERFIL); } catch (err) { /* sin almacenamiento */ }
+    location.hash = "#/alumnos";
+    location.reload();
+  });
+}
+
+// ======================================================================= actualizaciones
+let ACTUALIZACION = null;
+
+function pintarActualizacion(r) {
+  const nav = $('[data-nav="ajustes"]');
+  if (nav) nav.classList.toggle("con-aviso", !!r.hay_nueva);
+  const caja = $("#estado-actualizacion");
+  if (!caja) return;
+  if (!r.hay_nueva) {
+    caja.innerHTML = `✅ Tienes la última versión${r.ultima ? ` (${esc(r.ultima)})` : ""}.`;
+    return;
+  }
+  caja.innerHTML = `<p><strong>Hay una versión nueva: ${esc(r.ultima)}</strong>${r.fecha ? ` · publicada el ${esc(r.fecha.split("-").reverse().join("/"))}` : ""}</p>
+    ${r.notas ? `<pre class="notas-version">${esc(r.notas)}</pre>` : ""}
+    ${r.puede_instalar ? `<p><button class="primario" id="instalar-act">⬇️ Actualizar ahora</button></p>`
+      : `<p class="muted">Descárgala desde GitHub y sustituye la carpeta del programa.</p>`}`;
+  const b = $("#instalar-act");
+  if (b) b.onclick = () => intentar(async () => {
+    if (!confirm(`Se va a instalar la versión ${r.ultima}. El programa se cerrará y se volverá a abrir solo en unos segundos. ¿Seguir?`)) return;
+    b.disabled = true;
+    b.textContent = "Descargando…";
+    await api("POST", "/api/actualizacion/instalar", { url: r.url });
+    document.body.innerHTML = `<div class="vacio" style="margin:20vh auto;max-width:420px">Instalando la versión ${esc(r.ultima)}…<br>El programa se volverá a abrir en unos segundos.</div>`;
+  }).catch(() => { b.disabled = false; b.textContent = "⬇️ Actualizar ahora"; });
+}
+
+async function buscarActualizacion(manual) {
+  const caja = $("#estado-actualizacion");
+  if (manual && caja) caja.textContent = "Buscando…";
+  try {
+    ACTUALIZACION = await api("GET", "/api/actualizacion");
+    pintarActualizacion(ACTUALIZACION);
+    if (!manual && ACTUALIZACION.hay_nueva) aviso(`Hay una versión nueva (${ACTUALIZACION.ultima}). Ve a Ajustes para actualizar.`);
+  } catch (e) {
+    if (manual && caja) caja.textContent = "⚠️ " + e.message;
+  }
 }
 
 // ======================================================================= inicio
@@ -844,4 +916,5 @@ async function vistaAjustes() {
   } catch (e) { /* sin perfiles */ }
   pintarPerfilLateral();
   enrutar();
+  setTimeout(() => buscarActualizacion(false), 3000);  // aviso discreto si hay versión nueva
 })();

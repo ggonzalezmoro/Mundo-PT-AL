@@ -31,6 +31,8 @@ y que no dependa de nada instalado en el equipo salvo Windows 10/11.
 | **Vosk (modelo `vosk-model-small-es-0.42`, ~40 MB)** | Reconocimiento de voz sin Internet: el audio no sale del ordenador (datos de menores). |
 | **Analizador de dictado por palabras clave** | Determinista, explicable y sin conexión. El maestro ve una vista previa antes de guardar. |
 | **Sin nube** | Requisito del proyecto y protección de datos de alumnos. |
+| **Actualizaciones con GitHub Releases** | Sin servidores propios: la app consulta `api.github.com/repos/…/releases/latest`, descarga el `.zip`, y un `.bat` espera a que se cierre, copia los archivos (`robocopy /E`) y la vuelve a abrir. Solo se envía la petición de la versión, nunca datos. |
+| **Exportar / importar datos** | Copia completa de la base SQLite (API `backup`). Al importar se valida, se migra al esquema actual y se guarda antes una copia del estado anterior. |
 
 ## Modelo de datos
 
