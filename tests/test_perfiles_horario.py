@@ -4,7 +4,7 @@ import sqlite3
 import pytest
 from openpyxl import Workbook
 
-from mundoptal import horario
+from mundoptal import db, horario
 from mundoptal.planificador import Planificador
 from mundoptal.servidor import crear_app
 from mundoptal.store import Store, StoreError
@@ -112,7 +112,7 @@ def test_migracion_desde_v1(tmp_path):
     s = Store(ruta)
     uid = s.crear_usuario("Fátima")
     assert s.listar_alumnos(uid)[0]["nombre"] == "Antiguo"
-    assert s.q1("SELECT valor FROM meta WHERE clave = 'schema_version'")["valor"] == "3"
+    assert s.q1("SELECT valor FROM meta WHERE clave = 'schema_version'")["valor"] == str(db.SCHEMA_VERSION)
 
 
 def test_horario_sin_dias():

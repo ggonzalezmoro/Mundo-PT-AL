@@ -140,6 +140,9 @@ table { border-collapse: collapse; width: 100%; }
 .comp-cab .herr { background: var(--verde-claro); height: 100%; display: flex; align-items: center; padding-right: 6px; }
 .item textarea { border-color: transparent; resize: vertical; min-height: 32px; padding: 5px 7px; }
 .item textarea:hover { border-color: var(--borde); }
+.item textarea.nota { font-size: 12px; font-style: italic; color: var(--suave, #667); min-height: 22px; padding: 2px 7px; }
+.item textarea.nota:placeholder-shown { opacity: .35; }
+.item:hover textarea.nota:placeholder-shown, .item textarea.nota:focus { opacity: 1; }
 .item.destacado .texto textarea { background: var(--amarillo); }
 .item .herr { display: flex; gap: 0; justify-content: flex-end; }
 .estrella.on { opacity: 1; filter: none; }

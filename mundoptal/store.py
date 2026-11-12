@@ -26,7 +26,7 @@ CAMPOS_EDITABLES = {
     "areas": {"nombre", "especialidad", "orden"},
     "subareas": {"nombre", "orden"},
     "competencias": {"nombre", "orden"},
-    "items": {"texto", "eval_1t", "eval_2t", "eval_3t", "destacado", "orden"},
+    "items": {"texto", "eval_1t", "eval_2t", "eval_3t", "destacado", "nota", "orden"},
     "informes": {"curso", "maestra", "prof_area", "social", "actitud_pt", "actitud_al", "valoracion",
                  "orientaciones", "despedida"},
     "informe_areas": {"area", "texto", "orden"},
@@ -368,9 +368,10 @@ class Store:
                             ev = [it.get(k, "") if conservar_evaluaciones else "" for k in ("eval_1t", "eval_2t", "eval_3t")]
                             ev = [e if e in ESCALA else "" for e in ev]
                             self.conn.execute(
-                                """INSERT INTO items(competencia_id, texto, eval_1t, eval_2t, eval_3t, destacado, orden)
-                                   VALUES (?,?,?,?,?,?,?)""",
-                                (comp_id, it.get("texto", ""), *ev, int(bool(it.get("destacado"))), ii),
+                                """INSERT INTO items(competencia_id, texto, eval_1t, eval_2t, eval_3t, destacado, nota, orden)
+                                   VALUES (?,?,?,?,?,?,?,?)""",
+                                (comp_id, it.get("texto", ""), *ev, int(bool(it.get("destacado"))),
+                                 it.get("nota", "") or "", ii),
                             )
             self._tocar_aci(aci_id)
 

@@ -62,7 +62,12 @@ const rutas = [
 
 async function enrutar() {
   const h = location.hash || "#/alumnos";
-  if (!USUARIO && h !== "#/perfiles") { location.hash = "#/perfiles"; return; }
+  // Sin perfil solo se puede elegir/crear perfil o ir a Ajustes (p. ej. para importar datos)
+  if (!USUARIO && h !== "#/perfiles" && h !== "#/ajustes") {
+    if (location.hash) aviso("Primero elige o crea tu perfil (o importa tus datos desde Ajustes).");
+    location.hash = "#/perfiles";
+    return;
+  }
   for (const [re, fn, nav] of rutas) {
     const m = h.match(re);
     if (m) {
@@ -386,7 +391,8 @@ function htmlItem(it, tri) {
   };
   return `<div class="fila-tri item ${it.destacado ? "destacado" : ""}">
     <div></div>
-    <div class="texto"><textarea rows="1" data-tabla="items" data-id="${it.id}" data-campo="texto" placeholder="Describe el ítem">${esc(it.texto)}</textarea></div>
+    <div class="texto"><textarea rows="1" data-tabla="items" data-id="${it.id}" data-campo="texto" placeholder="Describe el ítem">${esc(it.texto)}</textarea>
+      <textarea rows="1" class="nota" data-tabla="items" data-id="${it.id}" data-campo="nota" placeholder="Observación (opcional)">${esc(it.nota || "")}</textarea></div>
     ${sel(1)}${sel(2)}${sel(3)}
     <div class="herr"><button class="icono estrella ${it.destacado ? "on" : ""}" data-id="${it.id}" title="Sombrear en amarillo (ítem nuevo en esta revisión)">⭐</button>${botonesOrden("items", it.id)}</div>
   </div>`;
@@ -687,7 +693,13 @@ async function vistaPerfiles() {
         <div><label>Nombre</label><input name="nombre" required placeholder="p. ej. Fátima Rodríguez García"></div>
         <div><label>Especialidad</label><select name="especialidad">${opciones("PT/AL")}</select></div>
       </div>
-      <p style="margin:12px 0 0"><button class="primario">Crear perfil</button></p></form>`;
+      <p style="margin:12px 0 0"><button class="primario">Crear perfil</button></p></form>
+    ${usuarios.length ? "" : `<div class="tarjeta" style="margin-top:16px"><h2>¿Ya usabas Mundo PT-AL en otro ordenador?</h2>
+      <p>Si te han pasado un archivo de datos (.db), cárgalo aquí y tendrás tu perfil con tus alumnos, ACIs, horario e informes.</p>
+      <p><label class="boton primario" for="importar-datos">📥 Importar datos de otro ordenador</label>
+        <input type="file" id="importar-datos" accept=".db" hidden></p></div>`}`;
+  const imp = $("#importar-datos");
+  if (imp) imp.onchange = (e) => importarDatos(e);
   $$("[data-entrar]").forEach((b) => b.onclick = () => {
     elegirPerfil(usuarios.find((u) => u.id === +b.dataset.entrar));
     location.hash = "#/alumnos";
@@ -852,7 +864,11 @@ async function vistaAjustes() {
       location.href = "/api/datos/exportar";
     }
   });
-  $("#importar-datos").onchange = (e) => intentar(async () => {
+  $("#importar-datos").onchange = (e) => importarDatos(e);
+}
+
+function importarDatos(e) {
+  return intentar(async () => {
     const f = e.target.files[0];
     e.target.value = "";
     if (!f) return;

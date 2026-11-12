@@ -81,6 +81,23 @@ def configurar_desde_consola(argv: list[str]) -> int:
     return 0
 
 
+def _quitar_marca_de_internet() -> None:
+    """Si el .zip se descargó o llegó por correo, Windows marca sus archivos como
+    «venidos de Internet» y no deja cargar las DLL de la ventana (se abriría el
+    navegador). Se quita esa marca a las librerías del propio programa."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    from pathlib import Path
+
+    raiz = Path(sys.executable).resolve().parent
+    for ruta in raiz.rglob("*"):
+        if ruta.suffix.lower() in (".dll", ".pyd", ".exe"):
+            try:
+                os.remove(str(ruta) + ":Zone.Identifier")
+            except OSError:
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     _configurar_log()
@@ -107,6 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         servidor.shutdown()
         return 0
 
+    _quitar_marca_de_internet()
     try:
         import webview
 
