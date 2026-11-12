@@ -7,7 +7,7 @@ Colegio San Ignacio de Loyola.
 Todo funciona **en el propio ordenador del maestro**: no hay nube, no hace falta
 Internet y los datos de los alumnos nunca salen del equipo.
 
-## Qué hace (versión 0.2)
+## Qué hace (versión 0.3)
 
 | Módulo | Qué permite |
 |---|---|
@@ -18,6 +18,7 @@ Internet y los datos de los alumnos nunca salen del equipo.
 | **Perfiles** | Cada maestro tiene su perfil (PT, AL o PT y AL) con sus propios alumnos, ACIs, horario y agenda. Se elige al abrir la aplicación. |
 | **Mi horario** | Configurar las franjas semanales del maestro (día, hora, PT/AL, alumnos, ítems por sesión) o **importarlas** desde una hoja de cálculo (`.xlsx` o `.csv`) con los días en columnas y las horas en filas. |
 | **Agenda de sesiones** | Planificación automática: los ítems **no conseguidos** de la ACI vigente de cada alumno se reparten en sus sesiones, rotando para que todos se trabajen. Desde la agenda se marca lo trabajado y se evalúa; un ítem que pasa a **C** deja de planificarse. |
+| **Informes a familias** | Informe descriptivo trimestral por alumno con el formato de «Observaciones y comentarios» de las ACIs: cómo se ha mostrado, actitud en las sesiones de PT y de AL, evolución en cada área (con un borrador hecho a partir de las evaluaciones de la ACI), cierre, despedida y firmas. Se exporta a Word y se incluye también al final de la ACI de ese trimestre. |
 
 ## Uso diario
 

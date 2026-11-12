@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -127,7 +127,38 @@ CREATE TABLE IF NOT EXISTS sesion_items (
     PRIMARY KEY (sesion_id, item_id)
 );
 
+-- Informe trimestral descriptivo para las familias
+CREATE TABLE IF NOT EXISTS informes (
+    id INTEGER PRIMARY KEY,
+    alumno_id INTEGER NOT NULL REFERENCES alumnos(id) ON DELETE CASCADE,
+    aci_id INTEGER REFERENCES acis(id) ON DELETE SET NULL,
+    trimestre INTEGER NOT NULL DEFAULT 1 CHECK (trimestre BETWEEN 1 AND 3),
+    curso_escolar TEXT NOT NULL DEFAULT '',
+    curso TEXT DEFAULT '',
+    maestra TEXT DEFAULT '',
+    social TEXT DEFAULT '',
+    actitud_pt TEXT DEFAULT '',
+    actitud_al TEXT DEFAULT '',
+    valoracion TEXT DEFAULT '',
+    orientaciones TEXT DEFAULT '',
+    despedida TEXT DEFAULT '',
+    prof_area TEXT DEFAULT '',
+    creado TEXT DEFAULT CURRENT_TIMESTAMP,
+    actualizado TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (alumno_id, trimestre, curso_escolar)
+);
+
+CREATE TABLE IF NOT EXISTS informe_areas (
+    id INTEGER PRIMARY KEY,
+    informe_id INTEGER NOT NULL REFERENCES informes(id) ON DELETE CASCADE,
+    area TEXT NOT NULL DEFAULT '',
+    texto TEXT DEFAULT '',
+    orden INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS ix_acis_alumno ON acis(alumno_id);
+CREATE INDEX IF NOT EXISTS ix_informes_alumno ON informes(alumno_id);
+CREATE INDEX IF NOT EXISTS ix_infareas_informe ON informe_areas(informe_id);
 CREATE INDEX IF NOT EXISTS ix_alumnos_usuario ON alumnos(usuario_id);
 CREATE INDEX IF NOT EXISTS ix_franjas_usuario ON franjas(usuario_id);
 CREATE INDEX IF NOT EXISTS ix_areas_aci ON areas(aci_id);

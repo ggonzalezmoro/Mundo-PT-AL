@@ -112,7 +112,7 @@ def test_migracion_desde_v1(tmp_path):
     s = Store(ruta)
     uid = s.crear_usuario("Fátima")
     assert s.listar_alumnos(uid)[0]["nombre"] == "Antiguo"
-    assert s.q1("SELECT valor FROM meta WHERE clave = 'schema_version'")["valor"] == "2"
+    assert s.q1("SELECT valor FROM meta WHERE clave = 'schema_version'")["valor"] == "3"
 
 
 def test_horario_sin_dias():

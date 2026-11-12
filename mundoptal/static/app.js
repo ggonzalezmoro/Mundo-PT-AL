@@ -56,6 +56,8 @@ const rutas = [
   [/^#\/agenda(?:\/(\d{4}-\d{2}-\d{2}))?$/, vistaAgenda, "agenda"],
   [/^#\/ajustes$/, vistaAjustes, "ajustes"],
   [/^#\/perfiles$/, vistaPerfiles, "perfiles"],
+  [/^#\/informes$/, vistaInformes, "informes"],
+  [/^#\/informe\/(\d+)$/, vistaInforme, "informes"],
 ];
 
 async function enrutar() {
@@ -148,6 +150,12 @@ async function vistaAlumno(id) {
         <div class="campo-ancho"><label>Observaciones</label><textarea data-tabla="alumnos" data-id="${a.id}" data-campo="observaciones" rows="2">${esc(a.observaciones)}</textarea></div>
       </div>
       <p style="margin:12px 0 0"><button class="peligro" id="borrar-alumno">Borrar alumno y todas sus ACIs</button></p></div>
+    <div class="tarjeta"><h2>Informes para la familia</h2>
+      ${a.informes.length ? `<table class="tabla-adapt"><tr><th>Trimestre</th><th>Curso escolar</th><th>Última modificación</th><th></th></tr>
+        ${a.informes.map((x) => `<tr><td>${x.trimestre}º trimestre</td><td>${esc(x.curso_escolar)}</td><td>${esc(x.actualizado)}</td>
+          <td><a class="boton mini" href="#/informe/${x.id}">Abrir</a></td></tr>`).join("")}</table>`
+        : `<div class="vacio">Sin informes todavía.</div>`}
+      <p style="margin:12px 0 0"><button id="nuevo-informe">📝 Informe del trimestre actual</button></p></div>
     <div class="tarjeta"><h2>ACIs</h2>
       ${a.acis.length ? `<table class="tabla-adapt"><tr><th>Trimestre</th><th>Curso escolar</th><th>Curso</th><th>Última modificación</th><th></th></tr>
         ${a.acis.map((x, i) => `<tr><td>${x.trimestre}º trimestre ${i === 0 ? '<span class="chip">vigente</span>' : ""}</td><td>${esc(x.curso_escolar)}</td>
@@ -160,6 +168,7 @@ async function vistaAlumno(id) {
     location.hash = `#/aci/${r.id}`;
   });
   $("#importar").onchange = (e) => importarWord(e.target.files[0], id);
+  $("#nuevo-informe").onclick = () => crearInforme(id);
   $("#borrar-alumno").onclick = () => intentar(async () => {
     if (!confirm(`¿Seguro que quieres borrar a ${a.nombre} y todas sus ACIs y sesiones? No se puede deshacer.`)) return;
     await api("DELETE", `/api/alumnos/${id}`);
@@ -700,6 +709,111 @@ async function vistaPerfiles() {
     aviso("Perfil guardado");
     vistaPerfiles();
   });
+}
+
+// ======================================================================= informes a familias
+async function crearInforme(alumnoId, trimestre, cursoEscolar) {
+  await intentar(async () => {
+    const r = await api("POST", `/api/alumnos/${alumnoId}/informes`, { trimestre, curso_escolar: cursoEscolar });
+    location.hash = `#/informe/${r.id}`;
+  });
+}
+
+async function vistaInformes() {
+  const d = await api("GET", "/api/informes");
+  let trimestre = d.trimestre;
+  const pintar = () => {
+    const filas = d.alumnos.map((a) => {
+      const inf = a.informes.find((x) => x.trimestre === trimestre && x.curso_escolar === d.curso_escolar);
+      return `<div class="tarjeta alumno">
+        <div class="fila"><div class="avatar">${esc(a.nombre[0] || "?").toUpperCase()}</div>
+          <div><div class="nombre">${esc(a.nombre)}</div><div class="muted">${esc(a.curso || "Curso sin indicar")}</div></div></div>
+        <div>${inf ? `<span class="chip">Empezado · ${esc(inf.actualizado.slice(0, 10))}</span>` : `<span class="muted">Sin informe</span>`}</div>
+        <div class="botones">${inf ? `<a class="boton primario" href="#/informe/${inf.id}">Abrir informe</a>`
+          : `<button class="primario" data-crear="${a.id}">Crear informe</button>`}</div></div>`;
+    }).join("");
+    vista.innerHTML = `
+      <div class="cabecera"><div><h1>Informes para las familias</h1>
+        <p class="sub">Informe descriptivo de cómo ha ido el trimestre («Observaciones y comentarios»): cómo se ha mostrado, actitud en las sesiones de PT y AL y evolución en cada área.
+        Se prepara un borrador con la ACI, lo completas y lo exportas a Word.</p></div>
+        <div class="acciones"><label for="tri" style="align-self:center">Trimestre</label>
+          <select id="tri">${[1, 2, 3].map((t) => `<option value="${t}" ${t === trimestre ? "selected" : ""}>${t}º · ${esc(d.curso_escolar)}</option>`).join("")}</select></div></div>
+      ${d.alumnos.length ? `<div class="rejilla">${filas}</div>` : `<div class="vacio">Todavía no tienes alumnos en tu perfil.</div>`}`;
+    $("#tri").onchange = (e) => { trimestre = +e.target.value; pintar(); };
+    $$("[data-crear]").forEach((b) => b.onclick = () => crearInforme(b.dataset.crear, trimestre, d.curso_escolar));
+  };
+  pintar();
+}
+
+function frasesBoton(clave, campo) {
+  return `<div class="frases" data-para="${campo}">${(INFORME.frases[clave] || []).map((f) => `<button type="button" class="mini frase">${esc(f)}</button>`).join("")}</div>`;
+}
+
+function bloqueTexto(titulo, campo, ayuda, frases) {
+  return `<div class="tarjeta"><h2>${titulo}</h2>${ayuda ? `<p class="muted">${ayuda}</p>` : ""}
+    <textarea rows="4" data-tabla="informes" data-id="${INFORME.id}" data-campo="${campo}" id="campo-${campo}">${esc(INFORME[campo])}</textarea>
+    ${frases ? frasesBoton(frases, campo) : ""}</div>`;
+}
+
+let INFORME = null;
+async function vistaInforme(id) {
+  INFORME = await api("GET", `/api/informes/${id}`);
+  const I = INFORME;
+  const esp = (USUARIO && USUARIO.especialidad) || "PT/AL";
+  vista.innerHTML = `
+    <div class="migas"><a href="#/informes">Informes</a> › <a href="#/alumno/${I.alumno_id}">${esc(I.alumno_nombre)}</a> › ${I.trimestre}º trimestre</div>
+    <div class="cabecera"><div><h1>Informe para la familia · ${esc(I.alumno_nombre)}</h1>
+      <p class="sub">${I.trimestre}º trimestre · Curso ${esc(I.curso_escolar)}. Se guarda solo al escribir. Para dictar, haz clic en un cuadro y pulsa <strong>Windows + H</strong>.</p></div>
+      <div class="acciones"><button class="primario" id="word-informe">📄 Exportar a Word</button></div></div>
+    <div class="tarjeta"><p class="muted" style="margin-top:0">Se redacta como el apartado «Observaciones y comentarios» de la ACI: un texto seguido para la familia.
+      Al exportar la ACI de este trimestre, este texto se incluye también al final de la ACI.</p><div class="campos">
+      <div><label>Curso</label><input data-tabla="informes" data-id="${I.id}" data-campo="curso" value="${esc(I.curso)}"></div>
+      <div><label>Prof. responsable de área (tutor/a)</label><input data-tabla="informes" data-id="${I.id}" data-campo="prof_area" value="${esc(I.prof_area)}"></div>
+      <div><label>Prof. AL/PT</label><input data-tabla="informes" data-id="${I.id}" data-campo="maestra" value="${esc(I.maestra)}"></div></div></div>
+    ${bloqueTexto("Cómo se ha mostrado este trimestre", "social", "Ánimo, relación con compañeros y adultos, gestión de emociones…", "social")}
+    ${esp !== "AL" ? bloqueTexto("Actitud en las sesiones de PT", "actitud_pt", "", "actitud") : ""}
+    ${esp !== "PT" ? bloqueTexto("Actitud en las sesiones de AL", "actitud_al", "", "actitud") : ""}
+    <div class="tarjeta"><div class="cabecera" style="margin:0 0 8px"><div><h2 style="margin:0">Evolución en las distintas áreas</h2>
+      <p class="muted">Borrador hecho con las evaluaciones de la ACI. Revísalo y escríbelo con tus palabras para la familia (el título del área no aparece en el Word).</p></div>
+      <div class="acciones"><button id="rehacer">↻ Rehacer borrador desde la ACI</button><button id="nueva-area">＋ Añadir área</button></div></div>
+      ${I.areas.length ? I.areas.map((a) => `<div class="area-informe">
+        <div class="fila" style="gap:8px"><input class="titulo-area" data-tabla="informe_areas" data-id="${a.id}" data-campo="area" value="${esc(a.area)}">
+          <button class="mini peligro" data-borrar-area="${a.id}" title="Quitar esta área del informe">✕</button></div>
+        <textarea rows="5" data-tabla="informe_areas" data-id="${a.id}" data-campo="texto">${esc(a.texto)}</textarea></div>`).join("")
+        : `<div class="vacio">No hay áreas. Pulsa «Rehacer borrador desde la ACI» o «Añadir área».</div>`}</div>
+    ${bloqueTexto("Orientaciones para casa", "orientaciones", "Opcional: sugerencias sencillas para seguir avanzando en casa.", "orientaciones")}
+    ${bloqueTexto("Cierre", "valoracion", "Unas palabras finales y agradecimiento a la familia.", "cierre")}
+    <div class="tarjeta"><h2>Despedida</h2><input style="width:100%" data-tabla="informes" data-id="${I.id}" data-campo="despedida" value="${esc(I.despedida)}"></div>`;
+  enlazarCampos(vista);
+  $$(".frases").forEach((caja) => caja.querySelectorAll(".frase").forEach((b) => b.onclick = () => {
+    const ta = $("#campo-" + caja.dataset.para);
+    ta.value = (ta.value.trim() ? ta.value.trim() + " " : "") + b.textContent;
+    ta.dispatchEvent(new Event("change"));
+  }));
+  $("#word-informe").onclick = () => intentar(async () => {
+    if (window.pywebview) {
+      const r = await api("GET", `/api/informes/${I.id}/word?guardar=1`);
+      aviso("Guardado en " + r.ruta);
+    } else {
+      location.href = `/api/informes/${I.id}/word`;
+    }
+  });
+  $("#rehacer").onclick = () => intentar(async () => {
+    if (I.areas.length && !confirm("Se sustituirá el texto de todas las áreas por un borrador nuevo hecho con la ACI. ¿Seguir?")) return;
+    await api("POST", `/api/informes/${I.id}/rehacer`);
+    vistaInforme(I.id);
+  });
+  $("#nueva-area").onclick = () => intentar(async () => {
+    const nombre = prompt("Nombre del área", "");
+    if (nombre === null) return;
+    await api("POST", `/api/informes/${I.id}/areas`, { area: nombre });
+    vistaInforme(I.id);
+  });
+  $$("[data-borrar-area]").forEach((b) => b.onclick = () => intentar(async () => {
+    if (!confirm("¿Quitar esta área del informe?")) return;
+    await api("DELETE", `/api/informe_areas/${b.dataset.borrarArea}`);
+    vistaInforme(I.id);
+  }));
 }
 
 // ======================================================================= ajustes

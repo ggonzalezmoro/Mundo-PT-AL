@@ -8,7 +8,7 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import dictado, horario
+from . import dictado, horario, informes
 from .config import APP_NAME, APP_VERSION, COLEGIO, DIAS, ESCALA, ESCALA_TEXTO, data_dir, static_dir
 from .planificador import Planificador, lunes_de
 from .store import Store, StoreError
@@ -128,8 +128,21 @@ def crear_app(db_path: str | Path) -> Flask:
         aci = store.obtener_aci(aci_id)
         if not aci:
             return jsonify(error="No encontrada"), 404
+        # Si ya está redactado el informe para la familia de ese trimestre, va en «Observaciones y comentarios»
+        fila = store.q1("""SELECT id FROM informes WHERE alumno_id = ? AND trimestre = ?
+                           AND (curso_escolar = ? OR ? = '') ORDER BY id DESC LIMIT 1""",
+                        (aci["alumno_id"], aci["trimestre"], aci["curso_escolar"], aci["curso_escolar"]))
+        if fila:
+            inf = informes.obtener(store, fila["id"])
+            textos = informes.parrafos(inf)
+            if textos:
+                previas = [x.strip() for x in (aci.get("observaciones") or "").split("\n") if x.strip()]
+                aci["observaciones_familia"] = previas + textos
+                aci["despedida_familia"] = (inf.get("despedida") or "").strip()
         nombre = re.sub(r"[^\w\-]+", "_", f"ACI_{aci['alumno_nombre']}_{aci['trimestre']}T").strip("_")
-        datos = exportar_aci(aci)
+        return enviar_docx(nombre, exportar_aci(aci))
+
+    def enviar_docx(nombre, datos):
         if request.args.get("guardar") == "1":
             # Guardar directamente en Documentos (la ventana nativa no siempre permite descargas)
             destino = Path.home() / "Documents"
@@ -145,6 +158,45 @@ def crear_app(db_path: str | Path) -> Flask:
             mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={"Content-Disposition": f'attachment; filename="{nombre}.docx"'},
         )
+
+    # ------------------------------------------------------------ informes a familias
+    @app.get("/api/informes")
+    def informes_resumen():
+        return jsonify(alumnos=informes.resumen_usuario(store, usuario_actual()),
+                       trimestre=informes.trimestre_actual(), curso_escolar=informes.curso_escolar_actual())
+
+    @app.get("/api/alumnos/<int:alumno_id>/informes")
+    def informes_alumno(alumno_id):
+        return jsonify(informes.listar(store, alumno_id))
+
+    @app.post("/api/alumnos/<int:alumno_id>/informes")
+    def crear_informe(alumno_id):
+        datos = cuerpo()
+        uid = usuario_actual()
+        u = store.obtener_usuario(uid) if uid else None
+        return jsonify(id=informes.crear(store, alumno_id, datos.get("trimestre"), datos.get("curso_escolar"),
+                                         maestra=(u or {}).get("nombre", "")))
+
+    @app.get("/api/informes/<int:informe_id>")
+    def obtener_informe(informe_id):
+        inf = informes.obtener(store, informe_id)
+        return (jsonify(inf), 200) if inf else (jsonify(error="No encontrado"), 404)
+
+    @app.post("/api/informes/<int:informe_id>/areas")
+    def informe_area(informe_id):
+        return jsonify(id=informes.anadir_area(store, informe_id, cuerpo().get("area", "")))
+
+    @app.post("/api/informes/<int:informe_id>/rehacer")
+    def informe_rehacer(informe_id):
+        informes.rehacer_areas(store, informe_id)
+        return jsonify(ok=True)
+
+    @app.get("/api/informes/<int:informe_id>/word")
+    def informe_word(informe_id):
+        inf = informes.obtener(store, informe_id)
+        if not inf:
+            return jsonify(error="No encontrado"), 404
+        return enviar_docx(informes.nombre_archivo(inf), informes.exportar_word(inf))
 
     @app.post("/api/importar-word")
     def importar_word():

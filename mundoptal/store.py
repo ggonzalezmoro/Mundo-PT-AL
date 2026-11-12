@@ -27,6 +27,9 @@ CAMPOS_EDITABLES = {
     "subareas": {"nombre", "orden"},
     "competencias": {"nombre", "orden"},
     "items": {"texto", "eval_1t", "eval_2t", "eval_3t", "destacado", "orden"},
+    "informes": {"curso", "maestra", "prof_area", "social", "actitud_pt", "actitud_al", "valoracion",
+                 "orientaciones", "despedida"},
+    "informe_areas": {"area", "texto", "orden"},
 }
 
 ADAPTACIONES_POR_DEFECTO = [
@@ -180,6 +183,9 @@ class Store:
                 "SELECT id, curso_escolar, trimestre, curso, actualizado FROM acis WHERE alumno_id = ? ORDER BY id DESC",
                 (alumno_id,),
             )
+            al["informes"] = self.q(
+                """SELECT id, trimestre, curso_escolar, actualizado FROM informes WHERE alumno_id = ?
+                   ORDER BY curso_escolar DESC, trimestre DESC""", (alumno_id,))
         return al
 
     # ------------------------------------------------------------ edición genérica
@@ -197,6 +203,11 @@ class Store:
         with self.tx():
             self.conn.execute(f"UPDATE {tabla} SET {sets} WHERE id = ?", (*cambios.values(), id_))
             self._tocar_aci(self.aci_de(tabla, id_))
+            if tabla == "informes":
+                self.conn.execute("UPDATE informes SET actualizado = CURRENT_TIMESTAMP WHERE id = ?", (id_,))
+            elif tabla == "informe_areas":
+                self.conn.execute("""UPDATE informes SET actualizado = CURRENT_TIMESTAMP
+                                     WHERE id = (SELECT informe_id FROM informe_areas WHERE id = ?)""", (id_,))
 
     def borrar(self, tabla: str, id_: int) -> None:
         if tabla not in CAMPOS_EDITABLES:

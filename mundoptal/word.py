@@ -189,8 +189,13 @@ def exportar_aci(aci: dict) -> bytes:
     p = doc.add_paragraph()
     r = p.add_run("+ OBSERVACIONES Y COMENTARIOS")
     r.bold = True
-    if aci.get("observaciones"):
-        doc.add_paragraph(aci["observaciones"])
+    textos = aci.get("observaciones_familia") or [
+        x.strip() for x in (aci.get("observaciones") or "").split("\n") if x.strip()]
+    for texto in textos:
+        p = doc.add_paragraph(texto)
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    if aci.get("despedida_familia"):
+        doc.add_paragraph().add_run(aci["despedida_familia"]).bold = True
     doc.add_paragraph()
     p = doc.add_paragraph()
     p.add_run("PROF. RESPONSABLE DE ÁREA").bold = True

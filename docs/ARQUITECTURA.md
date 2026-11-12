@@ -41,6 +41,7 @@ y que no dependa de nada instalado en el equipo salvo Windows 10/11.
   Una subárea con nombre vacío representa «competencias sin subárea» (p. ej. *El camino de las letras*).
   Cada área puede marcarse como AL, PT o ambas, para planificar solo en las sesiones de esa especialidad.
 - `items` guarda `eval_1t`, `eval_2t`, `eval_3t` ∈ {NI, I, ED, ED+, C}. La evaluación vigente es la del trimestre de la ACI o, si está vacía, la del trimestre anterior.
+- `informes` (alumno + trimestre + curso escolar, único) 1─N `informe_areas`: informe descriptivo para la familia (`mundoptal/informes.py`). Al crearlo se hace un borrador por área con la ACI del trimestre (C/ED+ conseguido, ED/I en proceso, NI a seguir trabajando). `schema_version` 3.
 - `franjas` (horario semanal) N─N `alumnos`; `sesiones` (franja + alumno + fecha) N─N `items` (`sesion_items`).
 
 ## Planificación automática
