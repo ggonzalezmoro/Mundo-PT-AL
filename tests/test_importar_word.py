@@ -151,3 +151,25 @@ def test_migracion_anade_nota(tmp_path):
     s = Store(ruta)
     cols = {r["name"] for r in s.conn.execute("PRAGMA table_info(items)")}
     assert "nota" in cols
+
+
+def test_texto_propio_tras_propuesta_y_criterios_se_conserva():
+    doc = Document()
+    doc.add_paragraph("NOMBRE: Alumna Prueba")
+    ad = doc.add_table(rows=1, cols=5)
+    for c, t in zip(ad.rows[0].cells, ["ÁREA", "Adaptación Significativa", "Adaptación No Significativa",
+                                       "No tiene adaptación", "Nivel curricular"]):
+        c.text = t
+    _fila(ad, ["MÚSICA", "X", "", "", "4 años"])
+    _titulo(ad, "Propuesta curricular adaptada: referente de 4 años, priorizando la comunicación.")
+    _titulo(ad, "Criterios de evaluación y seguimiento: evaluación continua y formativa.")
+    _titulo(ad, "Criterios de evaluación y estándares de aprendizaje: Indicadores de evaluación NI I ED C")
+    buf = io.BytesIO()
+    doc.save(buf)
+    r = importar_aci(buf.getvalue())
+    assert r["observaciones"].split("\n") == [
+        "Propuesta curricular adaptada: referente de 4 años, priorizando la comunicación.",
+        "Criterios de evaluación y seguimiento: evaluación continua y formativa.",
+    ]
+    # Las etiquetas vacías de la plantilla no añaden nada
+    assert importar_aci(documento_variado())["observaciones"] == ""

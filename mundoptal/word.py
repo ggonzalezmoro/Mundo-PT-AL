@@ -305,7 +305,34 @@ def importar_aci(origen) -> dict:
             _importar_tabla_area(tabla, res)
     res["areas"] = [a for a in res["areas"] if any(c["items"] for s in a["subareas"] for c in s["competencias"])
                     or a["nombre"]]
+    _textos_de_etiquetas(doc, res)
     return res
+
+
+RX_ETIQUETA_CON_TEXTO = re.compile(
+    r"^(propuesta curricular adaptada|criterios de evaluaci[óo]n[^:]*)\s*:\s*(.+)$", re.I | re.S)
+
+
+def _textos_de_etiquetas(doc, res):
+    """Algunas ACIs escriben contenido propio tras «Propuesta curricular adaptada:» o
+    «Criterios de evaluación…:». La aplicación no tiene un campo para ello, así que se
+    conserva en las observaciones de la ACI para no perderlo."""
+    extra, vistos = [], set()
+    for tc in doc.element.body.iter(qn("w:tc")):
+        for p in tc.iter(qn("w:p")):
+            t = _limpio("".join(x.text or "" for x in p.iter(qn("w:t"))))
+            m = RX_ETIQUETA_CON_TEXTO.match(t)
+            if not m:
+                continue
+            contenido = m.group(2).strip()
+            # Solo la leyenda de la escala no es contenido propio
+            if not contenido or re.match(r"^indicadores de evaluaci", contenido, re.I) or t in vistos:
+                continue
+            vistos.add(t)
+            extra.append(f"{m.group(1).strip()}: {contenido}")
+    if extra:
+        previas = [res["observaciones"]] if res["observaciones"] else []
+        res["observaciones"] = "\n".join(previas + extra)
 
 
 def _importar_adaptaciones(tabla, res):
