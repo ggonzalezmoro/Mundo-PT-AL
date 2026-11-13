@@ -109,3 +109,38 @@ def test_migracion_anade_estrategias_a_informes(tmp_path):
     conn = db.connect(ruta)
     fila = conn.execute("SELECT social, estrategias FROM informes WHERE id = 1").fetchone()
     assert fila["social"] == "Texto previo" and fila["estrategias"] == ""
+
+
+def test_borrador_desde_notas_de_la_agenda(tmp_path):
+    app = crear_app(tmp_path / "n.db")
+    c = app.test_client()
+    uid = c.post("/api/usuarios", json={"nombre": "Maestra", "especialidad": "AL"}).get_json()["id"]
+    h = {"X-Usuario": str(uid)}
+    al = c.post("/api/alumnos", json={"nombre": "Alumna Prueba", "curso": "4 años"}, headers=h).get_json()["id"]
+    _aci_con_items(c, al, h)
+    c.post("/api/franjas", json={"dia": 0, "inicio": "09:00", "fin": "09:30", "alumnos": [al]}, headers=h)
+    r = c.post("/api/planificar", json={"desde": "2026-10-05", "hasta": "2026-10-16"}, headers=h).get_json()
+    assert r["sesiones"] == 2
+    ses = c.get("/api/agenda?desde=2026-10-05&hasta=2026-10-16", headers=h).get_json()["sesiones"]
+    c.patch(f"/api/sesiones/{ses[0]['id']}", json={"notas": "hoy vino contenta, se distrae x el ruido"}, headers=h)
+    c.patch(f"/api/sesiones/{ses[1]['id']}", json={"notas": "mejor con el temporizador q la semana pasada"}, headers=h)
+    item = ses[0]["items"][0]
+    c.patch(f"/api/sesiones/{ses[0]['id']}/items/{item['id']}", json={"trabajado": True}, headers=h)
+
+    inf = c.post(f"/api/alumnos/{al}/informes", json={"trimestre": 1, "curso_escolar": "2026/27"}, headers=h).get_json()["id"]
+    d = c.get(f"/api/informes/{inf}/notas", headers=h).get_json()
+    assert d["sesiones"] == 2 and len(d["notas"]) == 2
+    assert d["items"] == [item["texto"]]
+    b = d["borrador"]
+    assert "trimestre, vino contenta, se distrae por el ruido." in b and "hoy" not in b.lower()
+    assert "Mejor con el temporizador que la semana pasada." in b
+    assert "hemos trabajado especialmente" in b
+    # Otro trimestre no ve esas notas
+    inf2 = c.post(f"/api/alumnos/{al}/informes", json={"trimestre": 2, "curso_escolar": "2026/27"}, headers=h).get_json()["id"]
+    assert c.get(f"/api/informes/{inf2}/notas", headers=h).get_json()["notas"] == []
+
+
+def test_pulir_nota():
+    assert informes.pulir_nota("  he trabajado la atencion  , tb pinchitos ") == "Hemos trabajado la atencion, también pinchitos."
+    assert informes.pulir_nota("") == ""
+    assert informes.rango_trimestre(3, "2025/26") == ("2026-04-01", "2026-07-31")

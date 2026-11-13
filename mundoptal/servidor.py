@@ -194,6 +194,13 @@ def crear_app(db_path: str | Path) -> Flask:
     def informe_area(informe_id):
         return jsonify(id=informes.anadir_area(store, informe_id, cuerpo().get("area", "")))
 
+    @app.get("/api/informes/<int:informe_id>/notas")
+    def informe_notas(informe_id):
+        datos = informes.notas_trimestre(store, informe_id)
+        inf = informes.obtener(store, informe_id)
+        datos["borrador"] = informes.redactar_notas(datos, informes._nombre_pila(inf["alumno_nombre"]))
+        return jsonify(datos)
+
     @app.post("/api/informes/<int:informe_id>/rehacer")
     def informe_rehacer(informe_id):
         informes.rehacer_areas(store, informe_id)

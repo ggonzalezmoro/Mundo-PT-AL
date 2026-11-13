@@ -243,3 +243,10 @@ dialog::backdrop { background: rgba(10, 40, 20, .45); }
 /* Actualizaciones */
 nav a.con-aviso::after { content: "●"; color: #d9534f; margin-left: 6px; font-size: 12px; }
 .notas-version { white-space: pre-wrap; font-family: inherit; background: var(--verde-pastel); padding: 8px 12px; border-radius: 8px; max-height: 200px; overflow: auto; }
+
+/* Micrófono junto a los cuadros de texto */
+.notas-sesion { display: flex; gap: 6px; align-items: flex-start; }
+.notas-sesion textarea { flex: 1; }
+.micro { flex-shrink: 0; padding: 4px 8px; }
+.micro.grabando { background: var(--rojo); color: #fff; border-color: var(--rojo); animation: latido 1.2s infinite; }
+.lista-notas { margin: 6px 0; padding-left: 18px; font-size: 13px; }

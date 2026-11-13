@@ -288,6 +288,95 @@ def parrafos(inf: dict) -> list[str]:
     return salida
 
 
+# ============================================================ notas de la agenda
+# Abreviaturas habituales al escribir deprisa
+ABREVIATURAS = {
+    "q": "que", "xq": "porque", "pq": "porque", "porq": "porque", "x": "por", "tb": "también", "tmb": "también",
+    "tbn": "también", "mñn": "mañana", "d": "de", "k": "que", "cn": "con", "sn": "sin", "dl": "del",
+    "msj": "mensaje", "mto": "mucho", "mta": "mucha", "bn": "bien", "mjr": "mejor", "aten": "atención",
+    "dif": "dificultad", "difs": "dificultades", "act": "actividad", "acts": "actividades",
+}
+# Primera persona del singular -> plural del equipo, como en los informes del colegio
+PERSONA = {
+    "he trabajado": "hemos trabajado", "he visto": "hemos observado",
+    "he observado": "hemos observado", "noto": "notamos", "veo": "vemos", "he notado": "hemos notado",
+}
+MOMENTOS = ["Al comienzo del trimestre", "A lo largo del trimestre", "En las últimas sesiones"]
+
+
+def rango_trimestre(trimestre: int, curso_escolar: str) -> tuple[str, str]:
+    """Fechas aproximadas de cada trimestre del curso «2026/27»."""
+    try:
+        inicio = int((curso_escolar or "").split("/")[0])
+    except ValueError:
+        inicio = date.today().year if date.today().month >= 8 else date.today().year - 1
+    return {1: (f"{inicio}-09-01", f"{inicio}-12-31"),
+            2: (f"{inicio + 1}-01-01", f"{inicio + 1}-03-31"),
+            3: (f"{inicio + 1}-04-01", f"{inicio + 1}-07-31")}[int(trimestre)]
+
+
+def notas_trimestre(store: Store, informe_id: int) -> dict:
+    """Notas de la agenda e ítems trabajados del alumno en el trimestre del informe."""
+    inf = store.q1("SELECT * FROM informes WHERE id = ?", (informe_id,))
+    if not inf:
+        raise StoreError("Informe no encontrado")
+    desde, hasta = rango_trimestre(inf["trimestre"], inf["curso_escolar"])
+    sesiones = store.q(
+        """SELECT se.id, se.fecha, se.notas, se.estado, f.especialidad FROM sesiones se
+           JOIN franjas f ON f.id = se.franja_id
+           WHERE se.alumno_id = ? AND se.fecha BETWEEN ? AND ? AND se.estado != 'cancelada'
+           ORDER BY se.fecha, f.inicio""", (inf["alumno_id"], desde, hasta))
+    items = store.q(
+        """SELECT DISTINCT i.texto FROM sesion_items si JOIN sesiones se ON se.id = si.sesion_id
+           JOIN items i ON i.id = si.item_id
+           WHERE se.alumno_id = ? AND se.fecha BETWEEN ? AND ? AND si.trabajado = 1
+           ORDER BY se.fecha""", (inf["alumno_id"], desde, hasta))
+    return {"desde": desde, "hasta": hasta,
+            "notas": [s for s in sesiones if (s["notas"] or "").strip()],
+            "sesiones": len(sesiones), "items": [i["texto"] for i in items]}
+
+
+def pulir_nota(texto: str) -> str:
+    """Convierte una nota rápida en una frase limpia: abreviaturas, persona, mayúscula y punto."""
+    t = re.sub(r"\s+", " ", (texto or "").strip())
+    t = re.sub(r"\s*[-–•]+\s*", ", ", t).strip(" ,")
+    t = re.sub(r"\b(\w+)\b", lambda m: ABREVIATURAS.get(m.group(1).lower(), m.group(1)), t)
+    for yo, nosotros in PERSONA.items():
+        t = re.sub(rf"\b{yo}\b", nosotros, t, flags=re.I)
+    # En un informe trimestral sobra el «hoy» de la nota del día
+    t = re.sub(r"\b(hoy|esta mañana|esta tarde|este día)\b,?\s*", "", t, flags=re.I).strip(" ,")
+    t = re.sub(r"\s+([,.;:!?])", r"\1", t)
+    t = re.sub(r"([,;:])(?=\S)", r"\1 ", t)
+    t = re.sub(r"\bmuy muy\b", "muy", t, flags=re.I)
+    if not t:
+        return ""
+    t = t[0].upper() + t[1:]
+    # mayúscula tras cada punto
+    t = re.sub(r"([.!?]\s+)(\w)", lambda m: m.group(1) + m.group(2).upper(), t)
+    return t if t[-1] in ".!?" else t + "."
+
+
+def redactar_notas(datos: dict, nombre: str) -> str:
+    """Borrador en prosa para la familia a partir de las notas rápidas de la agenda."""
+    notas = [pulir_nota(n["notas"]) for n in datos.get("notas", [])]
+    notas = [n for i, n in enumerate(notas) if n and n not in notas[:i]]
+    partes = []
+    if notas:
+        tercio = max(1, round(len(notas) / 3))
+        grupos = [notas[:tercio], notas[tercio:2 * tercio], notas[2 * tercio:]] if len(notas) >= 3 else [notas]
+        for i, grupo in enumerate(g for g in grupos if g):
+            if len(grupos) == 1:
+                partes.append(f"Durante las sesiones de este trimestre, {grupo[0][0].lower() + grupo[0][1:]}")
+                partes += grupo[1:]
+            else:
+                momento = MOMENTOS[min(i, 2)]
+                partes.append(f"{momento}, {grupo[0][0].lower() + grupo[0][1:]}")
+                partes += grupo[1:]
+    if datos.get("items"):
+        partes.append(f"En las sesiones hemos trabajado especialmente: {_lista(datos['items'])}.")
+    return " ".join(partes)
+
+
 # ======================================================================= Word
 def exportar_word(inf: dict) -> bytes:
     """Documento con el mismo formato que el apartado «Observaciones y comentarios» de las ACIs."""

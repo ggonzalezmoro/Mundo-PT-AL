@@ -409,6 +409,52 @@ async function exportarWord() {
   });
 }
 
+// ======================================================================= micrófono para cualquier cuadro de texto
+// Botón 🎤 que dicta (sin conexión, con Vosk) dentro del cuadro indicado. Si el dictado
+// sin conexión no está disponible, recuerda que se puede usar Windows + H.
+let VOZ_DISPONIBLE = null;
+let microActivo = null;
+function botonMicro(destinoId) {
+  return `<button type="button" class="mini micro" data-micro="${destinoId}" title="Dictar con el micrófono">🎤</button>`;
+}
+function enlazarMicros(raiz) {
+  raiz.querySelectorAll("[data-micro]").forEach((b) => b.onclick = () => intentar(async () => {
+    const ta = document.getElementById(b.dataset.micro);
+    if (!ta) return;
+    if (microActivo) { const era = microActivo.boton; await pararMicro(); if (era === b) return; }
+    if (VOZ_DISPONIBLE === null) VOZ_DISPONIBLE = await api("GET", "/api/voz").catch(() => ({ disponible: false, motivo: "" }));
+    if (!VOZ_DISPONIBLE.disponible) {
+      ta.focus();
+      aviso("Dictado sin conexión no disponible. Pulsa Windows + H para dictar en el cuadro.");
+      return;
+    }
+    const base = ta.value.trim();
+    await api("POST", "/api/voz/iniciar");
+    b.classList.add("grabando");
+    b.textContent = "⏹";
+    const sondeoMicro = setInterval(async () => {
+      const e = await api("GET", "/api/voz").catch(() => null);
+      if (!e) return;
+      ta.value = [base, e.texto, e.parcial].filter(Boolean).join(" ");
+      if (e.error) aviso(e.error, true);
+      if (!e.grabando) await pararMicro();
+    }, 600);
+    microActivo = { boton: b, ta, base, sondeo: sondeoMicro };
+  }));
+}
+async function pararMicro() {
+  if (!microActivo) return;
+  const { boton, ta, base, sondeo: s } = microActivo;
+  microActivo = null;
+  clearInterval(s);
+  const e = await api("POST", "/api/voz/detener").catch(() => null);
+  boton.classList.remove("grabando");
+  boton.textContent = "🎤";
+  if (e) ta.value = [base, e.texto].filter(Boolean).join(" ");
+  ta.dispatchEvent(new Event("change"));
+}
+window.addEventListener("hashchange", () => { pararMicro(); });
+
 // ======================================================================= dictado
 let sondeo = null;
 
@@ -633,6 +679,7 @@ async function vistaAgenda(semana) {
     vistaAgenda(desde);
   }));
   $$("[data-notas]").forEach((t) => t.onchange = () => intentar(() => api("PATCH", `/api/sesiones/${t.dataset.notas}`, { notas: t.value })));
+  enlazarMicros(vista);
 }
 
 function htmlSesion(s) {
@@ -646,7 +693,8 @@ function htmlSesion(s) {
         <option value=""></option>${INFO.escala.map((k) => `<option ${k === it.evaluacion ? "selected" : ""}>${k}</option>`).join("")}</select>
         <button class="icono" title="Quitar de esta sesión" data-quitar data-sesion="${s.id}" data-item="${it.id}">✕ quitar</button></div></div></li>`).join("")}</ul>`
       : `<p class="muted" style="font-size:12px">Sin ítems pendientes asignados.</p>`}
-    <textarea rows="1" placeholder="Notas de la sesión" data-notas="${s.id}" style="font-size:12px">${esc(s.notas)}</textarea>
+    <div class="notas-sesion"><textarea rows="2" placeholder="Notas de la sesión (escríbelas o díctalas rápido; luego se redactan en el informe)" data-notas="${s.id}" id="notas-${s.id}" style="font-size:12px">${esc(s.notas)}</textarea>
+      ${botonMicro("notas-" + s.id)}</div>
     <div class="estado" style="margin-top:6px">
       ${s.estado !== "realizada" ? `<button class="mini" data-sesion-estado="realizada" data-id="${s.id}">✔ Realizada</button>` : `<span class="chip">Realizada</span>`}
       ${s.estado !== "cancelada" ? `<button class="mini" data-sesion-estado="cancelada" data-id="${s.id}">Cancelar</button>` : ""}
@@ -763,7 +811,8 @@ function frasesBoton(clave, campo) {
 
 function bloqueTexto(titulo, campo, ayuda, frases) {
   return `<div class="tarjeta"><h2>${titulo}</h2>${ayuda ? `<p class="muted">${ayuda}</p>` : ""}
-    <textarea rows="4" data-tabla="informes" data-id="${INFORME.id}" data-campo="${campo}" id="campo-${campo}">${esc(INFORME[campo])}</textarea>
+    <div class="notas-sesion"><textarea rows="4" data-tabla="informes" data-id="${INFORME.id}" data-campo="${campo}" id="campo-${campo}">${esc(INFORME[campo])}</textarea>
+      ${botonMicro("campo-" + campo)}</div>
     ${frases ? frasesBoton(frases, campo) : ""}</div>`;
 }
 
@@ -775,13 +824,14 @@ async function vistaInforme(id) {
   vista.innerHTML = `
     <div class="migas"><a href="#/informes">Informes</a> › <a href="#/alumno/${I.alumno_id}">${esc(I.alumno_nombre)}</a> › ${I.trimestre}º trimestre</div>
     <div class="cabecera"><div><h1>Informe para la familia · ${esc(I.alumno_nombre)}</h1>
-      <p class="sub">${I.trimestre}º trimestre · Curso ${esc(I.curso_escolar)}. Se guarda solo al escribir. Para dictar, haz clic en un cuadro y pulsa <strong>Windows + H</strong>.</p></div>
+      <p class="sub">${I.trimestre}º trimestre · Curso ${esc(I.curso_escolar)}. Se guarda solo al escribir. Para dictar, pulsa 🎤 junto al cuadro (o haz clic en él y pulsa <strong>Windows + H</strong>).</p></div>
       <div class="acciones"><button class="primario" id="word-informe">📄 Exportar a Word</button></div></div>
     <div class="tarjeta"><p class="muted" style="margin-top:0">Se redacta como el apartado «Observaciones y comentarios» de la ACI: un texto seguido para la familia.
       Al exportar la ACI de este trimestre, este texto se incluye también al final de la ACI.</p><div class="campos">
       <div><label>Curso</label><input data-tabla="informes" data-id="${I.id}" data-campo="curso" value="${esc(I.curso)}"></div>
       <div><label>Prof. responsable de área (tutor/a)</label><input data-tabla="informes" data-id="${I.id}" data-campo="prof_area" value="${esc(I.prof_area)}"></div>
       <div><label>Prof. AL/PT</label><input data-tabla="informes" data-id="${I.id}" data-campo="maestra" value="${esc(I.maestra)}"></div></div></div>
+    <div class="tarjeta" id="tarjeta-notas"><h2>📝 Tus notas de la agenda</h2><p class="muted">Cargando las notas de las sesiones de este trimestre…</p></div>
     ${bloqueTexto("Cómo se ha mostrado este trimestre", "social", "Ánimo, relación con compañeros y adultos, gestión de emociones…", "social")}
     ${esp !== "AL" ? bloqueTexto("Actitud en las sesiones de PT", "actitud_pt", "", "actitud") : ""}
     ${esp !== "PT" ? bloqueTexto("Actitud en las sesiones de AL", "actitud_al", "", "actitud") : ""}
@@ -803,6 +853,8 @@ async function vistaInforme(id) {
     <div class="tarjeta"><h2>Despedida</h2><input style="width:100%" data-tabla="informes" data-id="${I.id}" data-campo="despedida" id="campo-despedida" value="${esc(I.despedida)}">
       ${frasesBoton("despedida", "despedida")}</div>`;
   enlazarCampos(vista);
+  enlazarMicros(vista);
+  pintarNotasInforme(I, esp);
   $$(".frases").forEach((caja) => caja.querySelectorAll(".frase").forEach((b) => b.onclick = () => {
     const ta = $("#campo-" + caja.dataset.para);
     // En la despedida (una sola línea) la frase sustituye; en los cuadros de texto se añade al final
@@ -833,6 +885,39 @@ async function vistaInforme(id) {
     await api("DELETE", `/api/informe_areas/${b.dataset.borrarArea}`);
     vistaInforme(I.id);
   }));
+}
+
+async function pintarNotasInforme(I, esp) {
+  const d = await api("GET", `/api/informes/${I.id}/notas`).catch(() => null);
+  const caja = $("#tarjeta-notas");
+  if (!caja || !d) return;
+  if (!d.notas.length && !d.items.length) {
+    caja.innerHTML = `<h2>📝 Tus notas de la agenda</h2><p class="muted">Aún no hay notas ni ítems trabajados en la agenda de este trimestre
+      (${fechaCorta(d.desde)} – ${fechaCorta(d.hasta)}). Lo que escribas o dictes en las notas de cada sesión aparecerá aquí para redactar el informe.</p>`;
+    return;
+  }
+  const destinos = [["social", "Cómo se ha mostrado este trimestre"],
+    ...(esp !== "AL" ? [["actitud_pt", "Actitud en las sesiones de PT"]] : []),
+    ...(esp !== "PT" ? [["actitud_al", "Actitud en las sesiones de AL"]] : []),
+    ["estrategias", "Estrategias y apoyos que han funcionado"], ["valoracion", "Cierre"]];
+  caja.innerHTML = `<h2>📝 Tus notas de la agenda</h2>
+    <p class="muted">${d.sesiones} sesiones este trimestre, ${d.notas.length} con notas. Abajo tienes un borrador redactado con ellas:
+      revísalo, cámbialo a tu gusto y añádelo al apartado que quieras.</p>
+    <details><summary class="muted">Ver mis notas tal cual (${d.notas.length})</summary>
+      <ul class="lista-notas">${d.notas.map((n) => `<li><strong>${fechaCorta(n.fecha)}</strong> · ${esc(n.notas)}</li>`).join("")}</ul></details>
+    <textarea rows="5" id="borrador-notas" style="margin-top:8px">${esc(d.borrador)}</textarea>
+    <div class="fila" style="gap:8px;margin-top:8px;flex-wrap:wrap"><label class="muted">Añadir a:</label>
+      <select id="destino-notas">${destinos.map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>
+      <button class="primario" id="usar-notas">＋ Añadir al informe</button></div>`;
+  $("#usar-notas").onclick = () => {
+    const ta = $("#campo-" + $("#destino-notas").value);
+    const txt = $("#borrador-notas").value.trim();
+    if (!ta || !txt) return;
+    ta.value = (ta.value.trim() ? ta.value.trim() + "\n" : "") + txt;
+    ta.dispatchEvent(new Event("change"));
+    ta.scrollIntoView({ behavior: "smooth", block: "center" });
+    aviso("Añadido al informe");
+  };
 }
 
 // ======================================================================= ajustes
