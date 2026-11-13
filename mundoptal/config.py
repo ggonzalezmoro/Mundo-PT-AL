@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "Mundo PT-AL"
-APP_VERSION = "0.4.5"
+APP_VERSION = "0.4.6"
 COLEGIO = "Colegio San Ignacio de Loyola"
 
 # Escala de evaluación de las ACIs (orden de menor a mayor logro)

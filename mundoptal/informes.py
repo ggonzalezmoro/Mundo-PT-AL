@@ -23,10 +23,10 @@ from .store import Store, StoreError, evaluacion_actual
 FRASES = {
     "social": [
         "Durante este trimestre, {nombre} se ha mostrado con buena disposición y con muchas ganas de seguir aprendiendo día a día.",
-        "Se relaciona con sus compañeros de forma positiva y disfruta compartiendo juegos.",
+        "Se ha trabajado la relación con sus compañeros y el juego compartido.",
         "Busca al adulto como referencia y acepta su ayuda cuando la necesita.",
         "Conviene seguir reforzando la gestión de las esperas y el respeto por los turnos.",
-        "Expresa cómo se siente con palabras, gestos o pictogramas.",
+        "Se ha trabajado la expresión de cómo se siente con palabras, gestos o pictogramas.",
         "{nombre} ha finalizado la etapa de Educación Infantil habiendo precisado adaptaciones metodológicas y apoyos a nivel curricular para favorecer su proceso de aprendizaje.",
         "{nombre} ha finalizado la etapa de Educación Infantil habiendo precisado adaptaciones metodológicas, así como apoyos tanto a nivel curricular como en el área del desarrollo atencional y funciones ejecutivas.",
         "Queremos destacar el gran cambio positivo de {nombre} en este trimestre: se muestra más motivado/a, cariñoso/a y con mucha más iniciativa.",
@@ -37,7 +37,7 @@ FRASES = {
     "actitud": [
         "Destaca especialmente su actitud y predisposición a la hora de realizar las tareas que se le proponen.",
         "Acude a las sesiones con alegría y participa de forma activa.",
-        "Mantiene la atención durante la actividad propuesta.",
+        "Todavía necesita apoyo para mantener la atención durante la actividad propuesta.",
         "Necesita apoyo para iniciar y terminar las tareas.",
         "Responde muy bien al refuerzo positivo.",
     ],
@@ -73,35 +73,37 @@ FRASES = {
 }
 
 # Frases para describir lo que se ha trabajado en cada ámbito (se añaden al texto del área)
+# Frases por ámbito: describen lo que se ha TRABAJADO o lo que aún NO ha conseguido.
+# Nunca presuponen un logro: lo conseguido sale solo de los ítems evaluados con C.
 FRASES_AMBITOS = {
     "Lenguaje oral": [
         "Se ha trabajado la descripción de imágenes, la narración de experiencias pasadas y la creación y narración de historias.",
-        "Ha ampliado su vocabulario y cada vez construye frases más largas y completas.",
-        "A nivel articulatorio, es necesario continuar reforzando algunos fonemas que todavía le cuestan.",
-        "Comprende órdenes sencillas y responde a preguntas sobre lo que ve o escucha.",
+        "Se ha trabajado la ampliación de vocabulario y la construcción de frases cada vez más completas.",
+        "A nivel articulatorio, todavía no ha adquirido algunos fonemas, por lo que es necesario continuar reforzándolos.",
+        "Se ha trabajado la comprensión de órdenes sencillas y las respuestas a preguntas sobre lo que ve o escucha.",
     ],
     "Lectoescritura": [
-        "Reconoce las vocales y se inicia en la unión silábica.",
+        "Se ha trabajado el reconocimiento de las vocales y la iniciación a la unión silábica.",
         "Se ha trabajado la asociación fonema-grafema con apoyo visual.",
-        "Realiza trazos y copia palabras sencillas a partir de un modelo.",
+        "Se ha trabajado la realización de trazos y la copia de palabras sencillas a partir de un modelo.",
     ],
     "Lógico-matemática": [
         "Se han trabajado los números del 1 al 3 y su asociación con la cantidad, por ejemplo colocando gomets.",
-        "Clasifica objetos por color, forma y tamaño.",
-        "Continúa series sencillas de dos elementos.",
+        "Se ha trabajado la clasificación de objetos por color, forma y tamaño.",
+        "Se han trabajado series sencillas de dos elementos.",
     ],
     "Atención y funciones ejecutivas": [
         "Se han realizado actividades como búsqueda de diferencias, seguimiento de series y copia de modelos.",
-        "Ha mejorado su tiempo de atención en la tarea y necesita menos recordatorios para terminarla.",
-        "Le sigue costando inhibir respuestas impulsivas, por lo que seguimos trabajando la espera.",
+        "Todavía necesita recordatorios y apoyo del adulto para mantener la atención y terminar la tarea.",
+        "Aún no es capaz de inhibir las respuestas impulsivas, por lo que seguiremos trabajando la espera.",
     ],
     "Psicomotricidad fina": [
         "Se ha trabajado la psicomotricidad fina con pinchitos, materiales de enroscar, plastilina, punzones y pinturas.",
-        "Ha mejorado la pinza y el control del trazo al colorear.",
+        "Se ha trabajado la pinza y el control del trazo al colorear.",
     ],
     "Autonomía": [
-        "Va ganando autonomía en las rutinas del aula, como colgar el abrigo o recoger el material.",
-        "Necesita apoyo verbal para seguir los pasos de las rutinas de aseo y vestido.",
+        "Se han trabajado las rutinas del aula, como colgar el abrigo o recoger el material.",
+        "Todavía necesita apoyo verbal para seguir los pasos de las rutinas de aseo y vestido.",
     ],
 }
 
@@ -135,13 +137,17 @@ def _frase(texto: str) -> str:
     return t[:1].lower() + t[1:] if t else ""
 
 
-def _lista(items: list[str]) -> str:
+def _lista(items: list[str], comillas: bool = False) -> str:
     textos = [_frase(t) for t in items if t.strip()]
     extra = len(textos) > MAX_POR_GRUPO
     textos = textos[:MAX_POR_GRUPO]
     if not textos:
         return ""
-    txt = textos[0] if len(textos) == 1 else "; ".join(textos[:-1]) + " y " + textos[-1]
+    if comillas:  # «…»: se lee como objetivo de la ACI, no como algo que el alumno ya hace
+        textos = [f"«{t}»" for t in textos]
+    txt = textos[0] if len(textos) == 1 else ", ".join(textos[:-1]) + " y " + textos[-1]
+    if not comillas:
+        txt = textos[0] if len(textos) == 1 else "; ".join(textos[:-1]) + " y " + textos[-1]
     return txt + (", entre otros aspectos" if extra else "")
 
 
@@ -150,18 +156,22 @@ def _nombre_area(area: str) -> str:
     return n[:1].lower() + n[1:] if n and not n[:2].isupper() else n or "esta área"
 
 
-# Cómo se redacta cada nivel de la escala (significado que usan las maestras):
-#   C   = conseguido y dominado        -> único nivel que se redacta como logro
-#   ED+ = casi conseguido, falta generalizarlo a todos los contextos
-#   ED  = en proceso, aún le falta mucho por trabajar
-#   I   = lo hace alguna vez, de forma puntual (no se puede decir que lo hace)
-#   NI  = no lo ha iniciado
+# Cómo se redacta cada nivel de la escala. Hay que ser estrictos: la familia no debe
+# entender que el alumno hace algo que no hace. Solo C se redacta como conseguido.
+#   C   = conseguido y dominado
+#   ED+ = casi conseguido, falta generalizarlo a todos los contextos (todavía NO conseguido)
+#   ED  = en proceso, le falta mucho por trabajar (NO conseguido)
+#   I   = lo ha hecho en alguna ocasión aislada; no se puede decir que lo haga (NO conseguido)
+#   NI  = no lo ha iniciado (NO conseguido)
 NIVELES_INFORME = [
-    ("C", "ha conseguido y tiene dominado lo siguiente"),
-    ("ED+", "está muy cerca de conseguir lo siguiente, aunque todavía necesita generalizarlo a todos los contextos"),
-    ("ED", "está en proceso de adquirir lo siguiente, aunque todavía le queda bastante por trabajar"),
-    ("I", "está empezando a iniciarse en lo siguiente, que por ahora aparece solo de forma puntual"),
-    ("NI", "todavía no ha iniciado lo siguiente, por lo que es recomendable seguir trabajándolo"),
+    ("C", "ha conseguido lo siguiente", False),
+    ("ED+", "todavía no ha conseguido del todo los siguientes objetivos, porque aunque está cerca, aún no "
+            "los realiza en todos los contextos", True),
+    ("ED", "todavía no ha conseguido los siguientes objetivos, en los que está en proceso y aún le queda "
+           "mucho por trabajar", True),
+    ("I", "todavía no ha conseguido los siguientes objetivos (solo los hemos observado en alguna ocasión aislada, "
+          "por lo que no podemos decir que los realice)", True),
+    ("NI", "todavía no ha iniciado los siguientes objetivos, que seguiremos trabajando", True),
 ]
 
 
@@ -169,7 +179,7 @@ def borrador_area(area: dict, trimestre: int, nombre: str, indice: int = 0) -> s
     """Párrafo descriptivo de un área a partir de las evaluaciones de la ACI.
 
     Solo los ítems en C se redactan como conseguidos; el resto se describe según su nivel."""
-    grupos: dict[str, list[str]] = {k: [] for k, _ in NIVELES_INFORME}
+    grupos: dict[str, list[str]] = {k: [] for k, _, _ in NIVELES_INFORME}
     for s in area.get("subareas", []):
         for c in s.get("competencias", []):
             for it in c.get("items", []):
@@ -178,13 +188,14 @@ def borrador_area(area: dict, trimestre: int, nombre: str, indice: int = 0) -> s
                     grupos[v].append(it["texto"])
     inicio = CONECTORES[indice % len(CONECTORES)].format(area=_nombre_area(area.get("nombre", "")))
     partes = []
-    for clave, frase in NIVELES_INFORME:
+    for clave, frase, comillas in NIVELES_INFORME:
         if not grupos[clave]:
             continue
+        lista = _lista(grupos[clave], comillas)
         if not partes:
-            partes.append(f"{inicio}, {nombre} {frase}: {_lista(grupos[clave])}.")
+            partes.append(f"{inicio}, {nombre} {frase}: {lista}.")
         else:
-            partes.append(f"{frase[0].upper()}{frase[1:]}: {_lista(grupos[clave])}.")
+            partes.append(f"{frase[0].upper()}{frase[1:]}: {lista}.")
     if not partes:
         return f"{inicio}, (sin evaluaciones en la ACI para este trimestre: describe aquí su evolución)."
     return " ".join(partes)
@@ -397,7 +408,7 @@ def redactar_notas(datos: dict, nombre: str) -> str:
                 partes.append(f"{momento}, {grupo[0][0].lower() + grupo[0][1:]}")
                 partes += grupo[1:]
     if datos.get("items"):
-        partes.append(f"En las sesiones hemos trabajado especialmente: {_lista(datos['items'])}.")
+        partes.append(f"En las sesiones hemos trabajado especialmente estos objetivos: {_lista(datos['items'], True)}.")
     return " ".join(partes)
 
 
