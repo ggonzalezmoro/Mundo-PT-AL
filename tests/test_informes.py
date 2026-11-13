@@ -40,7 +40,12 @@ def test_informe_completo(tmp_path):
     assert "Ana" in inf["frases"]["social"][0]
     assert "sin evaluar" not in texto.lower()
 
-    assert c.patch(f"/api/informes/{inf_id}", json={"social": "Juega con sus compañeros.", "actitud_al": "Viene contenta."}, headers=h).status_code == 200
+    assert any("Infantil" in f for f in inf["frases"]["cierre"])
+    assert "Lectoescritura" in inf["frases_ambitos"]
+    assert "¡Os deseamos un muy feliz verano y un merecido descanso!" in inf["frases"]["despedida"]
+
+    assert c.patch(f"/api/informes/{inf_id}", json={"social": "Juega con sus compañeros.", "actitud_al": "Viene contenta.",
+                                                    "estrategias": "Le ayuda el temporizador."}, headers=h).status_code == 200
     assert c.patch(f"/api/informe_areas/{inf['areas'][0]['id']}", json={"texto": "Texto propio."}, headers=h).status_code == 200
     extra = c.post(f"/api/informes/{inf_id}/areas", json={"area": "Autonomía"}, headers=h).get_json()["id"]
     c.patch(f"/api/informe_areas/{extra}", json={"texto": "Se pone el abrigo sola."}, headers=h)
@@ -56,6 +61,7 @@ def test_informe_completo(tmp_path):
     assert "Autonomía" not in todo  # el título del área no sale: es prosa seguida
     textos = [p.text for p in doc.paragraphs]
     assert textos.index("Juega con sus compañeros.") < textos.index("Viene contenta.") < textos.index("Texto propio.")
+    assert textos.index("Se pone el abrigo sola.") < textos.index("Le ayuda el temporizador.")
 
     # La ACI del mismo trimestre incluye el informe en «Observaciones y comentarios»
     aci_doc = Document(io.BytesIO(c.get(f"/api/acis/{aci}/word", headers=h).data))
@@ -86,3 +92,20 @@ def test_sin_aci_y_fechas(tmp_path):
     assert informes.trimestre_actual(date(2027, 5, 1)) == 3
     assert informes.curso_escolar_actual(date(2026, 11, 12)) == "2026/27"
     assert informes.curso_escolar_actual(date(2027, 5, 1)) == "2026/27"
+
+
+def test_migracion_anade_estrategias_a_informes(tmp_path):
+    import sqlite3
+    from mundoptal import db
+    ruta = tmp_path / "vieja.db"
+    con = sqlite3.connect(ruta)
+    con.executescript("""
+        CREATE TABLE meta(clave TEXT PRIMARY KEY, valor TEXT);
+        INSERT INTO meta VALUES ('schema_version', '4');
+        CREATE TABLE informes(id INTEGER PRIMARY KEY, alumno_id INTEGER, social TEXT DEFAULT '');
+        INSERT INTO informes(id, alumno_id, social) VALUES (1, 1, 'Texto previo');
+    """)
+    con.commit(); con.close()
+    conn = db.connect(ruta)
+    fila = conn.execute("SELECT social, estrategias FROM informes WHERE id = 1").fetchone()
+    assert fila["social"] == "Texto previo" and fila["estrategias"] == ""

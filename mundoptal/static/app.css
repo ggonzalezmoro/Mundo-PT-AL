@@ -233,6 +233,8 @@ dialog::backdrop { background: rgba(10, 40, 20, .45); }
 .frases { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .frases .frase { font-size: 12px; background: var(--verde-pastel); border-color: transparent; }
 .frases .frase::before { content: "＋ "; color: var(--verde); }
+.frases-ambito { margin-top: 6px; }
+.frases-ambito summary { cursor: pointer; font-size: 13px; }
 .area-informe { border-top: 1px solid var(--borde); padding: 12px 0; }
 .area-informe .titulo-area { font-weight: 700; color: var(--verde); flex: 1; }
 .area-informe textarea { margin-top: 6px; }

@@ -1,8 +1,8 @@
 """Informe trimestral descriptivo para las familias.
 
-La maestra redacta cómo ha ido el trimestre: aspecto social, actitud en las
-sesiones de PT y de AL, evolución en cada área, valoración general y
-orientaciones para casa. La evolución por áreas se puede rellenar con un
+La maestra redacta cómo ha ido el trimestre: aspecto social y conducta,
+actitud en las sesiones de PT y de AL, evolución en cada área, estrategias y
+apoyos que han funcionado, orientaciones para casa y cierre. La evolución por áreas se puede rellenar con un
 borrador a partir de las evaluaciones de la ACI, que después se retoca."""
 from __future__ import annotations
 
@@ -27,6 +27,12 @@ FRASES = {
         "Busca al adulto como referencia y acepta su ayuda cuando la necesita.",
         "Conviene seguir reforzando la gestión de las esperas y el respeto por los turnos.",
         "Expresa cómo se siente con palabras, gestos o pictogramas.",
+        "{nombre} ha finalizado la etapa de Educación Infantil habiendo precisado adaptaciones metodológicas y apoyos a nivel curricular para favorecer su proceso de aprendizaje.",
+        "{nombre} ha finalizado la etapa de Educación Infantil habiendo precisado adaptaciones metodológicas, así como apoyos tanto a nivel curricular como en el área del desarrollo atencional y funciones ejecutivas.",
+        "Queremos destacar el gran cambio positivo de {nombre} en este trimestre: se muestra más motivado/a, cariñoso/a y con mucha más iniciativa.",
+        "Las conductas disruptivas han disminuido de forma muy notable y cada vez acepta mejor las normas y los límites.",
+        "Con el apoyo y la mediación del adulto, se incorpora cada vez más a las dinámicas grupales y al juego con sus compañeros.",
+        "Todavía necesita la presencia y la guía cercana del adulto para regular su conducta en los momentos de más estimulación.",
     ],
     "actitud": [
         "Destaca especialmente su actitud y predisposición a la hora de realizar las tareas que se le proponen.",
@@ -34,6 +40,15 @@ FRASES = {
         "Mantiene la atención durante la actividad propuesta.",
         "Necesita apoyo para iniciar y terminar las tareas.",
         "Responde muy bien al refuerzo positivo.",
+    ],
+    "estrategias": [
+        "Para conseguir estos avances ha sido clave mantener una alta motivación y ofrecerle supervisión cercana.",
+        "El uso de apoyos visuales y estructuradores del tiempo (como el reloj de arena y los temporizadores) le ha ayudado a anticipar y a mantenerse en la tarea.",
+        "Combinar los apoyos visuales con sistemas de refuerzo externo ha favorecido que termine las actividades que se le proponen.",
+        "Ha sido de gran ayuda el uso de materiales altamente motivadores relacionados con sus intereses.",
+        "Responde mejor cuando cuenta con la presencia y la guía cercana del adulto.",
+        "Dividir las tareas en pasos cortos y anticiparle lo que vamos a hacer le da seguridad.",
+        "Las rutinas estables y la agenda visual le ayudan a afrontar los cambios con más tranquilidad.",
     ],
     "orientaciones": [
         "Es recomendable seguir trabajando en casa la flexibilidad ante los cambios, como aceptar terminar una actividad cuando se le pide.",
@@ -45,6 +60,48 @@ FRASES = {
         "Ha sido un verdadero placer acompañar a {nombre} durante este trimestre y poder formar parte de su camino.",
         "Da alegría ver cómo se esfuerza y cómo celebra cada uno de sus pequeños avances.",
         "¡Muchas gracias por vuestra confianza, esfuerzo y por el gran trabajo que estáis realizando en casa!",
+        "Por último, me gustaría daros las gracias y expresar lo orgullosa que estoy de {nombre}.",
+        "Ha sido un verdadero placer acompañarle durante todo Infantil y poder formar parte de su camino y de sus avances.",
+        "¡Muchas gracias por vuestra confianza, esfuerzo y por el gran trabajo que habéis realizado!",
+    ],
+    "despedida": [
+        "¡Os deseamos unas felices fiestas de Navidad!",
+        "¡Os deseamos unas felices vacaciones de Semana Santa!",
+        "¡Os deseamos unas felices vacaciones de verano!",
+        "¡Os deseamos un muy feliz verano y un merecido descanso!",
+    ],
+}
+
+# Frases para describir lo que se ha trabajado en cada ámbito (se añaden al texto del área)
+FRASES_AMBITOS = {
+    "Lenguaje oral": [
+        "Se ha trabajado la descripción de imágenes, la narración de experiencias pasadas y la creación y narración de historias.",
+        "Ha ampliado su vocabulario y cada vez construye frases más largas y completas.",
+        "A nivel articulatorio, es necesario continuar reforzando algunos fonemas que todavía le cuestan.",
+        "Comprende órdenes sencillas y responde a preguntas sobre lo que ve o escucha.",
+    ],
+    "Lectoescritura": [
+        "Reconoce las vocales y se inicia en la unión silábica.",
+        "Se ha trabajado la asociación fonema-grafema con apoyo visual.",
+        "Realiza trazos y copia palabras sencillas a partir de un modelo.",
+    ],
+    "Lógico-matemática": [
+        "Se han trabajado los números del 1 al 3 y su asociación con la cantidad, por ejemplo colocando gomets.",
+        "Clasifica objetos por color, forma y tamaño.",
+        "Continúa series sencillas de dos elementos.",
+    ],
+    "Atención y funciones ejecutivas": [
+        "Se han realizado actividades como búsqueda de diferencias, seguimiento de series y copia de modelos.",
+        "Ha mejorado su tiempo de atención en la tarea y necesita menos recordatorios para terminarla.",
+        "Le sigue costando inhibir respuestas impulsivas, por lo que seguimos trabajando la espera.",
+    ],
+    "Psicomotricidad fina": [
+        "Se ha trabajado la psicomotricidad fina con pinchitos, materiales de enroscar, plastilina, punzones y pinturas.",
+        "Ha mejorado la pinza y el control del trazo al colorear.",
+    ],
+    "Autonomía": [
+        "Va ganando autonomía en las rutinas del aula, como colgar el abrigo o recoger el material.",
+        "Necesita apoyo verbal para seguir los pasos de las rutinas de aseo y vestido.",
     ],
 }
 
@@ -216,6 +273,7 @@ def obtener(store: Store, informe_id: int) -> dict | None:
     inf["areas"] = store.q("SELECT * FROM informe_areas WHERE informe_id = ? ORDER BY orden, id", (informe_id,))
     pila = _nombre_pila(inf["alumno_nombre"])
     inf["frases"] = {k: [f.replace("{nombre}", pila) for f in v] for k, v in FRASES.items()}
+    inf["frases_ambitos"] = FRASES_AMBITOS
     return inf
 
 
@@ -223,7 +281,7 @@ def parrafos(inf: dict) -> list[str]:
     """Texto del informe en el orden de los modelos del colegio (prosa continua)."""
     bloques = [inf.get("social"), inf.get("actitud_pt"), inf.get("actitud_al"),
                *[a.get("texto") for a in inf.get("areas", [])],
-               inf.get("orientaciones"), inf.get("valoracion")]
+               inf.get("estrategias"), inf.get("orientaciones"), inf.get("valoracion")]
     salida = []
     for b in bloques:
         salida += [x.strip() for x in re.split(r"\n+", b or "") if x.strip()]

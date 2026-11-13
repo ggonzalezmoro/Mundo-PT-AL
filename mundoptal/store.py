@@ -28,7 +28,7 @@ CAMPOS_EDITABLES = {
     "competencias": {"nombre", "orden"},
     "items": {"texto", "eval_1t", "eval_2t", "eval_3t", "destacado", "nota", "orden"},
     "informes": {"curso", "maestra", "prof_area", "social", "actitud_pt", "actitud_al", "valoracion",
-                 "orientaciones", "despedida"},
+                 "orientaciones", "estrategias", "despedida"},
     "informe_areas": {"area", "texto", "orden"},
 }
 

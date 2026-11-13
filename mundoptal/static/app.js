@@ -791,15 +791,22 @@ async function vistaInforme(id) {
       ${I.areas.length ? I.areas.map((a) => `<div class="area-informe">
         <div class="fila" style="gap:8px"><input class="titulo-area" data-tabla="informe_areas" data-id="${a.id}" data-campo="area" value="${esc(a.area)}">
           <button class="mini peligro" data-borrar-area="${a.id}" title="Quitar esta área del informe">✕</button></div>
-        <textarea rows="5" data-tabla="informe_areas" data-id="${a.id}" data-campo="texto">${esc(a.texto)}</textarea></div>`).join("")
+        <textarea rows="5" data-tabla="informe_areas" data-id="${a.id}" data-campo="texto" id="campo-area-${a.id}">${esc(a.texto)}</textarea>
+        <details class="frases-ambito"><summary class="muted">Frases de ayuda: lo que se ha trabajado</summary>
+          ${Object.entries(I.frases_ambitos || {}).map(([ambito, lista]) => `<p class="muted" style="margin:6px 0 2px"><strong>${esc(ambito)}</strong></p>
+            <div class="frases" data-para="area-${a.id}">${lista.map((f) => `<button type="button" class="mini frase">${esc(f)}</button>`).join("")}</div>`).join("")}
+        </details></div>`).join("")
         : `<div class="vacio">No hay áreas. Pulsa «Rehacer borrador desde la ACI» o «Añadir área».</div>`}</div>
+    ${bloqueTexto("Estrategias y apoyos que han funcionado", "estrategias", "Opcional: qué le ha ayudado a avanzar (apoyos visuales, refuerzo, materiales motivadores, guía del adulto…).", "estrategias")}
     ${bloqueTexto("Orientaciones para casa", "orientaciones", "Opcional: sugerencias sencillas para seguir avanzando en casa.", "orientaciones")}
-    ${bloqueTexto("Cierre", "valoracion", "Unas palabras finales y agradecimiento a la familia.", "cierre")}
-    <div class="tarjeta"><h2>Despedida</h2><input style="width:100%" data-tabla="informes" data-id="${I.id}" data-campo="despedida" value="${esc(I.despedida)}"></div>`;
+    ${bloqueTexto("Cierre", "valoracion", "Unas palabras finales y agradecimiento a la familia. Incluye frases para despedir la etapa de Infantil.", "cierre")}
+    <div class="tarjeta"><h2>Despedida</h2><input style="width:100%" data-tabla="informes" data-id="${I.id}" data-campo="despedida" id="campo-despedida" value="${esc(I.despedida)}">
+      ${frasesBoton("despedida", "despedida")}</div>`;
   enlazarCampos(vista);
   $$(".frases").forEach((caja) => caja.querySelectorAll(".frase").forEach((b) => b.onclick = () => {
     const ta = $("#campo-" + caja.dataset.para);
-    ta.value = (ta.value.trim() ? ta.value.trim() + " " : "") + b.textContent;
+    // En la despedida (una sola línea) la frase sustituye; en los cuadros de texto se añade al final
+    ta.value = ta.tagName === "INPUT" ? b.textContent : (ta.value.trim() ? ta.value.trim() + " " : "") + b.textContent;
     ta.dispatchEvent(new Event("change"));
   }));
   $("#word-informe").onclick = () => intentar(async () => {

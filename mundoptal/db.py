@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS informes (
     actitud_al TEXT DEFAULT '',
     valoracion TEXT DEFAULT '',
     orientaciones TEXT DEFAULT '',
+    estrategias TEXT DEFAULT '',
     despedida TEXT DEFAULT '',
     prof_area TEXT DEFAULT '',
     creado TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -197,6 +198,10 @@ def _migrar(conn: sqlite3.Connection) -> None:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(items)")}
         if "nota" not in cols:
             conn.execute("ALTER TABLE items ADD COLUMN nota TEXT NOT NULL DEFAULT ''")
+    if "informes" in tablas:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(informes)")}
+        if "estrategias" not in cols:
+            conn.execute("ALTER TABLE informes ADD COLUMN estrategias TEXT DEFAULT ''")
     if "meta" in tablas:
         conn.execute("UPDATE meta SET valor = ? WHERE clave = 'schema_version'", (str(SCHEMA_VERSION),))
 
