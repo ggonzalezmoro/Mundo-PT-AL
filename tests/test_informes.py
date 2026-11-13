@@ -153,3 +153,27 @@ def test_solo_lo_conseguido_se_redacta_como_logro():
     assert "conseguido" not in texto.replace("muy cerca de conseguir", "")
     assert "muy cerca de conseguir lo siguiente, aunque todavía necesita generalizarlo a todos los contextos: responde a su nombre" in texto
     assert "que por ahora aparece solo de forma puntual: muestra atención conjunta" in texto
+
+
+def test_registro_de_asistencia(tmp_path):
+    app = crear_app(tmp_path / "a.db")
+    c = app.test_client()
+    uid = c.post("/api/usuarios", json={"nombre": "Maestra", "especialidad": "PT"}).get_json()["id"]
+    h = {"X-Usuario": str(uid)}
+    al = c.post("/api/alumnos", json={"nombre": "Alumna Prueba"}, headers=h).get_json()["id"]
+    _aci_con_items(c, al, h)
+    c.post("/api/franjas", json={"dia": 0, "inicio": "09:00", "fin": "09:30", "alumnos": [al]}, headers=h)
+    c.post("/api/planificar", json={"desde": "2026-10-05", "hasta": "2026-10-23"}, headers=h)
+    ses = c.get("/api/agenda?desde=2026-10-05&hasta=2026-10-23", headers=h).get_json()["sesiones"]
+    assert len(ses) == 3
+    c.patch(f"/api/sesiones/{ses[0]['id']}", json={"estado": "realizada"}, headers=h)
+    c.patch(f"/api/sesiones/{ses[1]['id']}", json={"falta": True, "motivo": "Enfermedad"}, headers=h)
+    c.patch(f"/api/sesiones/{ses[2]['id']}", json={"estado": "cancelada"}, headers=h)
+    agenda = c.get("/api/agenda?desde=2026-10-05&hasta=2026-10-23", headers=h).get_json()["sesiones"]
+    assert agenda[1]["estado"] == "cancelada" and agenda[1]["falta"] == 1 and agenda[1]["motivo"] == "Enfermedad"
+    d = c.get(f"/api/alumnos/{al}/asistencia?trimestre=1&curso_escolar=2026/27", headers=h).get_json()
+    assert d["realizadas"] == 1 and d["canceladas"] == 1
+    assert d["faltas"] == [{"fecha": "2026-10-12", "motivo": "Enfermedad"}]
+    # «Deshacer» quita la falta
+    c.patch(f"/api/sesiones/{ses[1]['id']}", json={"estado": "planificada"}, headers=h)
+    assert c.get(f"/api/alumnos/{al}/asistencia?trimestre=1&curso_escolar=2026/27", headers=h).get_json()["faltas"] == []

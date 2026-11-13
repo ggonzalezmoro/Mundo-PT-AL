@@ -155,6 +155,7 @@ async function vistaAlumno(id) {
         <div class="campo-ancho"><label>Observaciones</label><textarea data-tabla="alumnos" data-id="${a.id}" data-campo="observaciones" rows="2">${esc(a.observaciones)}</textarea></div>
       </div>
       <p style="margin:12px 0 0"><button class="peligro" id="borrar-alumno">Borrar alumno y todas sus ACIs</button></p></div>
+    <div class="tarjeta" id="asistencia"><h2>Asistencia a las sesiones</h2><p class="muted">Cargando…</p></div>
     <div class="tarjeta"><h2>Informes para la familia</h2>
       ${a.informes.length ? `<table class="tabla-adapt"><tr><th>Trimestre</th><th>Curso escolar</th><th>Última modificación</th><th></th></tr>
         ${a.informes.map((x) => `<tr><td>${x.trimestre}º trimestre</td><td>${esc(x.curso_escolar)}</td><td>${esc(x.actualizado)}</td>
@@ -168,6 +169,7 @@ async function vistaAlumno(id) {
         : `<div class="vacio">Sin ACIs todavía.</div>`}
       <p class="muted" style="margin-top:10px">La ACI más reciente es la vigente: es la que se usa para planificar las sesiones.</p></div>`;
   enlazarCampos(vista);
+  pintarAsistencia(id);
   $("#nueva-aci").onclick = () => intentar(async () => {
     const r = await api("POST", `/api/alumnos/${id}/acis`, {});
     location.hash = `#/aci/${r.id}`;
@@ -667,6 +669,12 @@ async function vistaAgenda(semana) {
     await api("PATCH", `/api/sesiones/${b.dataset.id}`, { estado: b.dataset.sesionEstado });
     vistaAgenda(desde);
   }));
+  $$("[data-falta]").forEach((b) => b.onclick = () => intentar(async () => {
+    const motivo = prompt("El alumno no ha venido. Motivo (opcional): enfermedad, cita médica…", "");
+    if (motivo === null) return;
+    await api("PATCH", `/api/sesiones/${b.dataset.falta}`, { falta: true, motivo });
+    vistaAgenda(desde);
+  }));
   $$("[data-trabajado]").forEach((c) => c.onchange = () => intentar(() =>
     api("PATCH", `/api/sesiones/${c.dataset.sesion}/items/${c.dataset.item}`, { trabajado: c.checked })));
   $$("[data-evaluar]").forEach((s) => s.onchange = () => intentar(async () => {
@@ -697,7 +705,9 @@ function htmlSesion(s) {
       ${botonMicro("notas-" + s.id)}</div>
     <div class="estado" style="margin-top:6px">
       ${s.estado !== "realizada" ? `<button class="mini" data-sesion-estado="realizada" data-id="${s.id}">✔ Realizada</button>` : `<span class="chip">Realizada</span>`}
-      ${s.estado !== "cancelada" ? `<button class="mini" data-sesion-estado="cancelada" data-id="${s.id}">Cancelar</button>` : ""}
+      ${s.estado !== "cancelada" ? `<button class="mini" data-falta="${s.id}" title="El alumno no ha venido: queda registrado como falta">🚫 No ha venido</button>
+        <button class="mini" data-sesion-estado="cancelada" data-id="${s.id}" title="La sesión no se hace por otro motivo (excursión, festivo…)">Cancelar</button>`
+        : s.falta ? `<span class="chip falta">No vino${s.motivo ? ": " + esc(s.motivo) : ""}</span>` : `<span class="chip">Cancelada</span>`}
       ${s.estado !== "planificada" ? `<button class="mini" data-sesion-estado="planificada" data-id="${s.id}">Deshacer</button>` : ""}
     </div></div>`;
 }
@@ -887,12 +897,35 @@ async function vistaInforme(id) {
   }));
 }
 
+function htmlAsistencia(d) {
+  const f = d.faltas;
+  return `<p><strong>${d.trimestre}º trimestre ${esc(d.curso_escolar)}</strong>: ${d.realizadas} sesiones realizadas ·
+      <strong>${f.length} ${f.length === 1 ? "falta" : "faltas"}</strong>${d.canceladas ? ` · ${d.canceladas} canceladas por otros motivos` : ""}</p>
+    ${f.length ? `<ul class="lista-notas">${f.map((x) => `<li>${fechaCorta(x.fecha)}${x.motivo ? " · " + esc(x.motivo) : ""}</li>`).join("")}</ul>` : ""}`;
+}
+
+async function pintarAsistencia(alumnoId) {
+  const caja = $("#asistencia");
+  const pintar = async (trimestre, curso) => {
+    const q = trimestre ? `?trimestre=${trimestre}&curso_escolar=${encodeURIComponent(curso)}` : "";
+    const d = await api("GET", `/api/alumnos/${alumnoId}/asistencia${q}`).catch(() => null);
+    if (!d || !caja.isConnected) return;
+    caja.innerHTML = `<div class="fila" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><h2 style="margin:0">Asistencia a las sesiones</h2>
+        <select id="trim-asist">${[1, 2, 3].map((t) => `<option value="${t}" ${t === d.trimestre ? "selected" : ""}>${t}º trimestre</option>`).join("")}</select></div>
+      ${htmlAsistencia(d)}
+      <p class="muted" style="margin:6px 0 0">Se marca en la agenda con «🚫 No ha venido» en la sesión.</p>`;
+    $("#trim-asist").onchange = (e) => pintar(e.target.value, d.curso_escolar);
+  };
+  pintar();
+}
+
 async function pintarNotasInforme(I, esp) {
   const d = await api("GET", `/api/informes/${I.id}/notas`).catch(() => null);
   const caja = $("#tarjeta-notas");
   if (!caja || !d) return;
+  const asis = `<div class="asistencia-informe">${htmlAsistencia(d.asistencia)}</div>`;
   if (!d.notas.length && !d.items.length) {
-    caja.innerHTML = `<h2>📝 Tus notas de la agenda</h2><p class="muted">Aún no hay notas ni ítems trabajados en la agenda de este trimestre
+    caja.innerHTML = `<h2>📝 Tus notas de la agenda</h2>${asis}<p class="muted">Aún no hay notas ni ítems trabajados en la agenda de este trimestre
       (${fechaCorta(d.desde)} – ${fechaCorta(d.hasta)}). Lo que escribas o dictes en las notas de cada sesión aparecerá aquí para redactar el informe.</p>`;
     return;
   }
@@ -900,7 +933,7 @@ async function pintarNotasInforme(I, esp) {
     ...(esp !== "AL" ? [["actitud_pt", "Actitud en las sesiones de PT"]] : []),
     ...(esp !== "PT" ? [["actitud_al", "Actitud en las sesiones de AL"]] : []),
     ["estrategias", "Estrategias y apoyos que han funcionado"], ["valoracion", "Cierre"]];
-  caja.innerHTML = `<h2>📝 Tus notas de la agenda</h2>
+  caja.innerHTML = `<h2>📝 Tus notas de la agenda</h2>${asis}
     <p class="muted">${d.sesiones} sesiones este trimestre, ${d.notas.length} con notas. Abajo tienes un borrador redactado con ellas:
       revísalo, cámbialo a tu gusto y añádelo al apartado que quieras.</p>
     <details><summary class="muted">Ver mis notas tal cual (${d.notas.length})</summary>

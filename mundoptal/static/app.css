@@ -250,3 +250,7 @@ nav a.con-aviso::after { content: "●"; color: #d9534f; margin-left: 6px; font-
 .micro { flex-shrink: 0; padding: 4px 8px; }
 .micro.grabando { background: var(--rojo); color: #fff; border-color: var(--rojo); animation: latido 1.2s infinite; }
 .lista-notas { margin: 6px 0; padding-left: 18px; font-size: 13px; }
+
+/* Asistencia */
+.chip.falta { background: #fde8e8; color: var(--rojo); }
+.asistencia-informe { background: var(--verde-pastel); border-radius: 8px; padding: 2px 12px; margin-bottom: 8px; }

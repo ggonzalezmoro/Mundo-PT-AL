@@ -249,7 +249,11 @@ class Planificador:
             if "estado" in datos:
                 if datos["estado"] not in ("planificada", "realizada", "cancelada"):
                     raise StoreError("Estado no válido")
-                c.execute("UPDATE sesiones SET estado = ? WHERE id = ?", (datos["estado"], sesion_id))
+                c.execute("UPDATE sesiones SET estado = ?, falta = 0 WHERE id = ?", (datos["estado"], sesion_id))
+            if datos.get("falta"):
+                # El alumno no ha venido: la sesión no se hace y queda registrada como falta de asistencia
+                c.execute("UPDATE sesiones SET estado = 'cancelada', falta = 1, motivo = ? WHERE id = ?",
+                          (str(datos.get("motivo") or "").strip(), sesion_id))
             if "notas" in datos:
                 c.execute("UPDATE sesiones SET notas = ? WHERE id = ?", (datos["notas"], sesion_id))
 

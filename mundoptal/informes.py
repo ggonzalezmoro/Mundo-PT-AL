@@ -327,6 +327,17 @@ def rango_trimestre(trimestre: int, curso_escolar: str) -> tuple[str, str]:
             3: (f"{inicio + 1}-04-01", f"{inicio + 1}-07-31")}[int(trimestre)]
 
 
+def asistencia(store: Store, alumno_id: int, trimestre: int, curso_escolar: str) -> dict:
+    """Registro de asistencia del alumno en un trimestre a partir de las sesiones de la agenda."""
+    desde, hasta = rango_trimestre(trimestre, curso_escolar)
+    filas = store.q("""SELECT fecha, estado, falta, motivo FROM sesiones
+                       WHERE alumno_id = ? AND fecha BETWEEN ? AND ? ORDER BY fecha""", (alumno_id, desde, hasta))
+    return {"trimestre": int(trimestre), "curso_escolar": curso_escolar, "desde": desde, "hasta": hasta,
+            "realizadas": sum(1 for f in filas if f["estado"] == "realizada"),
+            "faltas": [{"fecha": f["fecha"], "motivo": f["motivo"] or ""} for f in filas if f["falta"]],
+            "canceladas": sum(1 for f in filas if f["estado"] == "cancelada" and not f["falta"])}
+
+
 def notas_trimestre(store: Store, informe_id: int) -> dict:
     """Notas de la agenda e ítems trabajados del alumno en el trimestre del informe."""
     inf = store.q1("SELECT * FROM informes WHERE id = ?", (informe_id,))
@@ -344,6 +355,7 @@ def notas_trimestre(store: Store, informe_id: int) -> dict:
            WHERE se.alumno_id = ? AND se.fecha BETWEEN ? AND ? AND si.trabajado = 1
            ORDER BY se.fecha""", (inf["alumno_id"], desde, hasta))
     return {"desde": desde, "hasta": hasta,
+            "asistencia": asistencia(store, inf["alumno_id"], inf["trimestre"], inf["curso_escolar"]),
             "notas": [s for s in sesiones if (s["notas"] or "").strip()],
             "sesiones": len(sesiones), "items": [i["texto"] for i in items]}
 
