@@ -150,29 +150,41 @@ def _nombre_area(area: str) -> str:
     return n[:1].lower() + n[1:] if n and not n[:2].isupper() else n or "esta área"
 
 
+# Cómo se redacta cada nivel de la escala (significado que usan las maestras):
+#   C   = conseguido y dominado        -> único nivel que se redacta como logro
+#   ED+ = casi conseguido, falta generalizarlo a todos los contextos
+#   ED  = en proceso, aún le falta mucho por trabajar
+#   I   = lo hace alguna vez, de forma puntual (no se puede decir que lo hace)
+#   NI  = no lo ha iniciado
+NIVELES_INFORME = [
+    ("C", "ha conseguido y tiene dominado lo siguiente"),
+    ("ED+", "está muy cerca de conseguir lo siguiente, aunque todavía necesita generalizarlo a todos los contextos"),
+    ("ED", "está en proceso de adquirir lo siguiente, aunque todavía le queda bastante por trabajar"),
+    ("I", "está empezando a iniciarse en lo siguiente, que por ahora aparece solo de forma puntual"),
+    ("NI", "todavía no ha iniciado lo siguiente, por lo que es recomendable seguir trabajándolo"),
+]
+
+
 def borrador_area(area: dict, trimestre: int, nombre: str, indice: int = 0) -> str:
-    """Párrafo descriptivo de un área a partir de las evaluaciones de la ACI."""
-    logrado, proceso, pendiente = [], [], []
+    """Párrafo descriptivo de un área a partir de las evaluaciones de la ACI.
+
+    Solo los ítems en C se redactan como conseguidos; el resto se describe según su nivel."""
+    grupos: dict[str, list[str]] = {k: [] for k, _ in NIVELES_INFORME}
     for s in area.get("subareas", []):
         for c in s.get("competencias", []):
             for it in c.get("items", []):
                 v = evaluacion_actual(it, trimestre)
-                if v in ("C", "ED+"):
-                    logrado.append(it["texto"])
-                elif v in ("ED", "I"):
-                    proceso.append(it["texto"])
-                elif v == "NI":
-                    pendiente.append(it["texto"])
+                if v in grupos:
+                    grupos[v].append(it["texto"])
     inicio = CONECTORES[indice % len(CONECTORES)].format(area=_nombre_area(area.get("nombre", "")))
     partes = []
-    if logrado:
-        partes.append(f"{inicio}, {nombre} ha conseguido lo siguiente: {_lista(logrado)}.")
-    if proceso:
-        partes.append(("Actualmente" if logrado else f"{inicio}, actualmente")
-                      + f" se encuentra avanzando en: {_lista(proceso)}.")
-    if pendiente:
-        partes.append(("Es recomendable" if partes else f"{inicio}, es recomendable")
-                      + f" seguir trabajando: {_lista(pendiente)}.")
+    for clave, frase in NIVELES_INFORME:
+        if not grupos[clave]:
+            continue
+        if not partes:
+            partes.append(f"{inicio}, {nombre} {frase}: {_lista(grupos[clave])}.")
+        else:
+            partes.append(f"{frase[0].upper()}{frase[1:]}: {_lista(grupos[clave])}.")
     if not partes:
         return f"{inicio}, (sin evaluaciones en la ACI para este trimestre: describe aquí su evolución)."
     return " ".join(partes)

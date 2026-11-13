@@ -33,9 +33,9 @@ def test_informe_completo(tmp_path):
     assert inf["maestra"] == "Fátima" and inf["curso"] == "5 años"
     texto = inf["areas"][0]["texto"]
     assert inf["areas"][0]["area"] == "Comunicación y representación"
-    assert texto.startswith("En el área de comunicación y representación, Ana ha conseguido lo siguiente: mantiene la mirada en el objeto.")
-    assert "Actualmente se encuentra avanzando en: señala lo que quiere." in texto
-    assert "Es recomendable seguir trabajando: nombra colores básicos." in texto
+    assert texto.startswith("En el área de comunicación y representación, Ana ha conseguido y tiene dominado lo siguiente: mantiene la mirada en el objeto.")
+    assert "todavía le queda bastante por trabajar: señala lo que quiere." in texto
+    assert "Todavía no ha iniciado lo siguiente, por lo que es recomendable seguir trabajándolo: nombra colores básicos." in texto
     assert inf["despedida"] == "¡Os deseamos unas felices fiestas de Navidad!"
     assert "Ana" in inf["frases"]["social"][0]
     assert "sin evaluar" not in texto.lower()
@@ -144,3 +144,12 @@ def test_pulir_nota():
     assert informes.pulir_nota("  he trabajado la atencion  , tb pinchitos ") == "Hemos trabajado la atencion, también pinchitos."
     assert informes.pulir_nota("") == ""
     assert informes.rango_trimestre(3, "2025/26") == ("2026-04-01", "2026-07-31")
+
+
+def test_solo_lo_conseguido_se_redacta_como_logro():
+    items = [{"texto": t, "eval_1t": e, "eval_2t": "", "eval_3t": ""}
+             for t, e in [("Responde a su nombre", "ED+"), ("Muestra atención conjunta", "I")]]
+    texto = informes.borrador_area({"nombre": "Lenguaje", "subareas": [{"competencias": [{"items": items}]}]}, 1, "Ana")
+    assert "conseguido" not in texto.replace("muy cerca de conseguir", "")
+    assert "muy cerca de conseguir lo siguiente, aunque todavía necesita generalizarlo a todos los contextos: responde a su nombre" in texto
+    assert "que por ahora aparece solo de forma puntual: muestra atención conjunta" in texto
