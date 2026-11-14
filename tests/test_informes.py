@@ -33,9 +33,10 @@ def test_informe_completo(tmp_path):
     assert inf["maestra"] == "Fátima" and inf["curso"] == "5 años"
     texto = inf["areas"][0]["texto"]
     assert inf["areas"][0]["area"] == "Comunicación y representación"
-    assert texto.startswith("En el área de comunicación y representación, Ana ha conseguido lo siguiente: mantiene la mirada en el objeto.")
-    assert "Todavía no ha conseguido los siguientes objetivos, en los que está en proceso y aún le queda mucho por trabajar: «señala lo que quiere»." in texto
-    assert "Todavía no ha iniciado los siguientes objetivos, que seguiremos trabajando: «nombra colores básicos»." in texto
+    # Redactado con frases, no con la lista de ítems de la ACI
+    assert texto.startswith("En el área de comunicación y representación, Ana ha conseguido mantener la mirada en el objeto.")
+    assert "todavía está en proceso de señalar lo que quiere, por lo que seguiremos trabajándolo." in texto
+    assert "es recomendable seguir trabajando para que llegue a nombrar colores básicos, ya que todavía no lo ha iniciado." in texto
     assert inf["despedida"] == "¡Os deseamos unas felices fiestas de Navidad!"
     assert "Ana" in inf["frases"]["social"][0]
     assert "sin evaluar" not in texto.lower()
@@ -71,7 +72,7 @@ def test_informe_completo(tmp_path):
     # Rehacer borrador sustituye las áreas
     assert c.post(f"/api/informes/{inf_id}/rehacer", headers=h).status_code == 200
     areas = c.get(f"/api/informes/{inf_id}", headers=h).get_json()["areas"]
-    assert len(areas) == 1 and "mantiene la mirada" in areas[0]["texto"]
+    assert len(areas) == 1 and "mantener la mirada" in areas[0]["texto"]
 
     resumen = c.get("/api/informes", headers=h).get_json()
     assert resumen["alumnos"][0]["informes"][0]["id"] == inf_id
@@ -150,13 +151,52 @@ def test_solo_lo_conseguido_se_redacta_como_logro():
     items = [{"texto": t, "eval_1t": e, "eval_2t": "", "eval_3t": ""}
              for t, e in [("Responde a su nombre", "ED+"), ("Muestra atención conjunta", "I"), ("Imita gestos", "ED")]]
     texto = informes.borrador_area({"nombre": "Lenguaje", "subareas": [{"competencias": [{"items": items}]}]}, 1, "Ana")
-    assert "ha conseguido lo siguiente" not in texto
-    assert texto.count("todavía no ha conseguido") + texto.count("Todavía no ha conseguido") == 3
-    assert "«muestra atención conjunta»" in texto and "no podemos decir que los realice" in texto
+    for logro in ("ha conseguido", "ya es capaz", "ha logrado"):
+        assert logro not in texto
+    assert "está muy cerca de responder a su nombre, aunque todavía necesita afianzarlo" in texto
+    assert "todavía está en proceso de imitar gestos" in texto
+    assert "llega a mostrar atención conjunta, por lo que todavía no podemos decir que lo haga" in texto
     # Las frases de ayuda por ámbito no presuponen logros
     for lista in informes.FRASES_AMBITOS.values():
         for f in lista:
             assert f.startswith(("Se ha", "Se han", "Todavía", "Aún", "A nivel")), f
+
+
+def test_redaccion_de_items_en_frases():
+    from mundoptal import redaccion as r
+    casos = {
+        "Señala objetos que se le indican entre varias alternativas": "señalar objetos que se le indican entre varias alternativas",
+        "Se pone y quita los zapatos de forma autónoma.": "ponerse y quitarse los zapatos de forma autónoma",
+        "Coge la mochila y la cuelga con o sin ayuda.": "coger la mochila y colgarla con o sin ayuda",
+        "Abre y cierra diferentes recipientes": "abrir y cerrar diferentes recipientes",
+        "Sigue de forma espontánea la mirada del adulto.": "seguir de forma espontánea la mirada del adulto",
+        "Adquiere vocabulario básico relacionado con la comida. (Ej.: agua, pan).":
+            "adquirir vocabulario básico relacionado con la comida (por ejemplo, agua, pan)",
+        "Continúa la actividad ante una señal de aprobación.": "continuar la actividad ante una señal de aprobación",
+        "Sonríe como respuesta al saludo.": "sonreír como respuesta al saludo",
+        "Colabora al ponerse y quitarse la ropa.": "colaborar al ponerse y quitarse la ropa",
+    }
+    for item, esperado in casos.items():
+        assert r.redactar_item(item) == esperado, item
+    # La observación de la maestra sustituye al ejemplo de la ACI
+    assert r.redactar_item("Adquiere vocabulario de la comida. (Ej.: agua).", "PLÁTANO, ZANAHORIA") == \
+        "adquirir vocabulario de la comida (plátano, zanahoria)"
+    assert r.tema("Desarrollar la sintaxis - lenguaje receptivo") == "la sintaxis (lenguaje receptivo)"
+    assert r.tema("Lógico-Matemática – figuras geométricas") == "la parte lógico-matemática (figuras geométricas)"
+    assert r.tema("funciones ejecutivas") == "las funciones ejecutivas"
+
+
+def test_muchos_pendientes_se_resumen_por_temas_sin_repetir():
+    comps = []
+    for nombre, evals in (("Desarrollar la atención conjunta", ["ED", "ED", "NI"]),
+                          ("Desarrollar la capacidad de imitación", ["NI", "NI", "I"])):
+        comps.append({"nombre": nombre, "items": [{"texto": f"Imita cosa {i}", "eval_1t": e}
+                                                   for i, e in enumerate(evals)]})
+    texto = informes.borrador_area({"nombre": "Comunicación", "subareas": [{"competencias": comps}]}, 1, "Leo")
+    assert "Imita cosa" not in texto and "imitar cosa" not in texto  # no copia la ACI
+    assert texto.count("la atención conjunta") == 1 and texto.count("la capacidad de imitación") == 1
+    assert "sigue en proceso en lo relativo a la atención conjunta" in texto
+    assert "es recomendable seguir trabajando la capacidad de imitación, un aspecto que todavía no ha iniciado" in texto
 
 
 def test_registro_de_asistencia(tmp_path):

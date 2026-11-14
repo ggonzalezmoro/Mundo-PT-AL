@@ -846,7 +846,7 @@ async function vistaInforme(id) {
     ${esp !== "AL" ? bloqueTexto("Actitud en las sesiones de PT", "actitud_pt", "", "actitud") : ""}
     ${esp !== "PT" ? bloqueTexto("Actitud en las sesiones de AL", "actitud_al", "", "actitud") : ""}
     <div class="tarjeta"><div class="cabecera" style="margin:0 0 8px"><div><h2 style="margin:0">Evolución en las distintas áreas</h2>
-      <p class="muted">Borrador hecho con las evaluaciones de la ACI. Revísalo y escríbelo con tus palabras para la familia (el título del área no aparece en el Word).</p></div>
+      <p class="muted">Borrador redactado a partir de la ACI: cuenta con frases lo que ha conseguido y resume por temas lo que todavía se está trabajando (la lista completa ya está en la ACI). Añade lo que no esté en la ACI: anécdotas, cómo se expresa, cómo se relaciona… (el título del área no aparece en el Word).</p></div>
       <div class="acciones"><button id="rehacer">↻ Rehacer borrador desde la ACI</button><button id="nueva-area">＋ Añadir área</button></div></div>
       ${I.areas.length ? I.areas.map((a) => `<div class="area-informe">
         <div class="fila" style="gap:8px"><input class="titulo-area" data-tabla="informe_areas" data-id="${a.id}" data-campo="area" value="${esc(a.area)}">

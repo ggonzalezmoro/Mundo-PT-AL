@@ -15,6 +15,7 @@ from docx.enum.section import WD_ORIENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Pt
 
+from . import redaccion
 from .config import static_dir
 from .store import Store, StoreError, evaluacion_actual
 
@@ -114,7 +115,8 @@ DESPEDIDAS = {
 }
 
 # Conectores para que cada área empiece de forma distinta, como en los informes del colegio
-CONECTORES = ["En el área de {area}", "En cuanto a {area}", "Respecto a {area}", "En relación con {area}"]
+CONECTORES = ["En el área de {area}", "En cuanto al área de {area}", "Respecto al área de {area}",
+              "En relación con el área de {area}"]
 
 MAX_POR_GRUPO = 6
 
@@ -156,49 +158,112 @@ def _nombre_area(area: str) -> str:
     return n[:1].lower() + n[1:] if n and not n[:2].isupper() else n or "esta área"
 
 
-# Cómo se redacta cada nivel de la escala. Hay que ser estrictos: la familia no debe
-# entender que el alumno hace algo que no hace. Solo C se redacta como conseguido.
+# Cómo se redacta cada nivel de la escala. El informe no repite la ACI: lo conseguido se
+# cuenta con frases naturales («ha conseguido señalar lo que quiere») y lo que falta se
+# resume por temas (las competencias). Hay que ser estrictos: solo C es conseguido.
 #   C   = conseguido y dominado
 #   ED+ = casi conseguido, falta generalizarlo a todos los contextos (todavía NO conseguido)
 #   ED  = en proceso, le falta mucho por trabajar (NO conseguido)
 #   I   = lo ha hecho en alguna ocasión aislada; no se puede decir que lo haga (NO conseguido)
 #   NI  = no lo ha iniciado (NO conseguido)
-NIVELES_INFORME = [
-    ("C", "ha conseguido lo siguiente", False),
-    ("ED+", "todavía no ha conseguido del todo los siguientes objetivos, porque aunque está cerca, aún no "
-            "los realiza en todos los contextos", True),
-    ("ED", "todavía no ha conseguido los siguientes objetivos, en los que está en proceso y aún le queda "
-           "mucho por trabajar", True),
-    ("I", "todavía no ha conseguido los siguientes objetivos (solo los hemos observado en alguna ocasión aislada, "
-          "por lo que no podemos decir que los realice)", True),
-    ("NI", "todavía no ha iniciado los siguientes objetivos, que seguiremos trabajando", True),
-]
+VERBOS_LOGRO = ["ha conseguido", "ya es capaz de", "ha logrado"]
+MAX_ITEMS_LOGRO = 6      # ítems conseguidos que se nombran (en dos frases)
+MAX_ITEMS_PENDIENTES = 2  # por encima, lo pendiente se resume por temas
+CONECTORES_FRASE = ["Actualmente, ", "Por otro lado, ", "Además, ", "Asimismo, "]
+
+
+def _pendiente(clave: str, x: str, por_temas: bool, varios: bool, n: str) -> str:
+    """Frase para lo que todavía NO ha conseguido. n = «Nombre » en la primera frase del área."""
+    lo = "los" if varios else "lo"
+    sujeto = f" {n.strip()}" if n else ""
+    if clave == "ED+":
+        if por_temas:
+            return f"{n}está muy cerca de conseguir algunos objetivos relacionados con {x}, aunque todavía necesita afianzarlos para hacerlos en todos los contextos"
+        return f"{n}está muy cerca de {x}, aunque todavía necesita afianzar{lo} para hacer{lo} en todos los contextos"
+    if clave == "ED":
+        if por_temas:
+            como = "en aspectos como" if varios else "en lo relativo a"
+            return f"{n}sigue en proceso {como} {x}, en {'los' if varios else 'lo'} que todavía le queda bastante por trabajar"
+        return f"{n}todavía está en proceso de {x}, por lo que seguiremos trabajándo{lo}"
+    if clave == "I":
+        if por_temas:
+            como = "en aspectos como" if varios else "en lo relativo a"
+            return (f"{como} {x} solo hemos observado avances{(' de ' + n.strip()) if n else ''} en ocasiones aisladas, "
+                    "por lo que todavía no podemos decir que estén conseguidos")
+        return f"solo en alguna ocasión aislada hemos observado que{sujeto} llega a {x}, por lo que todavía no podemos decir que lo haga de forma habitual"
+    # NI
+    if por_temas:
+        return f"es recomendable seguir trabajando {x}, {'aspectos' if varios else 'un aspecto'} que{sujeto} todavía no ha iniciado"
+    return f"es recomendable seguir trabajando para que{sujeto} llegue a {x}, ya que todavía no {lo} ha iniciado"
 
 
 def borrador_area(area: dict, trimestre: int, nombre: str, indice: int = 0) -> str:
-    """Párrafo descriptivo de un área a partir de las evaluaciones de la ACI.
+    """Párrafo descriptivo de un área a partir de las evaluaciones de la ACI, redactado
+    para la familia (no es la lista de ítems de la ACI).
 
     Solo los ítems en C se redactan como conseguidos; el resto se describe según su nivel."""
-    grupos: dict[str, list[str]] = {k: [] for k, _, _ in NIVELES_INFORME}
+    grupos: dict[str, list[tuple[str, str, str]]] = {k: [] for k in ("C", "ED+", "ED", "I", "NI")}
     for s in area.get("subareas", []):
         for c in s.get("competencias", []):
             for it in c.get("items", []):
                 v = evaluacion_actual(it, trimestre)
-                if v in grupos:
-                    grupos[v].append(it["texto"])
+                if v in grupos and (it.get("texto") or "").strip():
+                    grupos[v].append((it["texto"], it.get("nota") or "", c.get("nombre") or s.get("nombre") or ""))
     inicio = CONECTORES[indice % len(CONECTORES)].format(area=_nombre_area(area.get("nombre", "")))
-    partes = []
-    for clave, frase, comillas in NIVELES_INFORME:
-        if not grupos[clave]:
+    frases: list[str] = []
+
+    logros = [redaccion.redactar_item(t, nota) for t, nota, _ in grupos["C"]]
+    if logros:
+        verbo = VERBOS_LOGRO[indice % len(VERBOS_LOGRO)]
+        frases.append(f"{inicio}, {nombre} {verbo} {redaccion.unir(logros[:3])}.")
+        if len(logros) > 3:
+            otro = VERBOS_LOGRO[(indice + 1) % len(VERBOS_LOGRO)]
+            extra = ", entre otros logros" if len(logros) > MAX_ITEMS_LOGRO else ""
+            frases.append(f"Asimismo, {otro} {redaccion.unir(logros[3:MAX_ITEMS_LOGRO])}{extra}.")
+
+    conectores = [c for c in CONECTORES_FRASE if not (frases and len(logros) > 3 and c == "Asimismo, ")]
+    pendientes = ("ED+", "ED", "I", "NI")
+    # Con muchos objetivos pendientes se habla por temas, y cada tema va solo en el nivel
+    # que más se repite en él (a igualdad, el más bajo), para no contradecirse.
+    temas_nivel: dict[str, list[str]] = {k: [] for k in pendientes}
+    if sum(len(grupos[k]) for k in pendientes) > 2 * MAX_ITEMS_PENDIENTES:
+        cuenta: dict[str, dict[str, int]] = {}
+        for k in pendientes:
+            for _, _, comp in grupos[k]:
+                t = redaccion.tema(comp)
+                if t:
+                    cuenta.setdefault(t, {}).setdefault(k, 0)
+                    cuenta[t][k] += 1
+        for t, por_nivel in cuenta.items():
+            k = max(por_nivel, key=lambda n: (por_nivel[n], pendientes.index(n)))
+            temas_nivel[k].append(t)
+    for clave in pendientes:
+        items = grupos[clave]
+        if not items:
             continue
-        lista = _lista(grupos[clave], comillas)
-        if not partes:
-            partes.append(f"{inicio}, {nombre} {frase}: {lista}.")
+        sin_tema = [t for t, _, comp in items if not redaccion.tema(comp)]
+        por_temas = bool(temas_nivel[clave]) or (any(temas_nivel.values()) and not sin_tema)
+        if por_temas and not temas_nivel[clave]:
+            continue  # sus temas ya se nombran en otro nivel
+        if por_temas:
+            x = redaccion.unir(temas_nivel[clave][:3])
         else:
-            partes.append(f"{frase[0].upper()}{frase[1:]}: {lista}.")
-    if not partes:
+            mostrar = items[:MAX_ITEMS_PENDIENTES] if len(items) > MAX_ITEMS_PENDIENTES else items
+            x = redaccion.unir([redaccion.sin_comenzar(redaccion.redactar_item(t, con_detalle=False))
+                                for t, _, _ in mostrar])
+            if len(items) > MAX_ITEMS_PENDIENTES:
+                x += ", entre otros aspectos"
+        primera = not frases
+        varios = len(temas_nivel[clave]) > 1 if por_temas else len(items) > 1
+        cuerpo = _pendiente(clave, x, por_temas, varios, f"{nombre} " if primera else "")
+        if primera:
+            frases.append(f"{inicio}, {cuerpo}.")
+        else:
+            con = conectores.pop(0) if conectores else ""
+            frases.append(f"{con}{cuerpo}." if con else f"{cuerpo[0].upper()}{cuerpo[1:]}.")
+    if not frases:
         return f"{inicio}, (sin evaluaciones en la ACI para este trimestre: describe aquí su evolución)."
-    return " ".join(partes)
+    return " ".join(frases)
 
 
 def _aci_para(store: Store, alumno_id: int, trimestre: int, curso_escolar: str) -> dict | None:
