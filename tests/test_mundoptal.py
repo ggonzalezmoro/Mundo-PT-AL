@@ -174,19 +174,25 @@ def test_exportar_e_importar_ida_y_vuelta(store):
     _, aci = _aci_con_items(store)
     d = store.obtener_aci(aci)
     item = d["areas"][0]["subareas"][0]["competencias"][0]["items"][1]
-    store.actualizar("items", item["id"], {"eval_1t": "ED", "destacado": 1})
+    store.actualizar("items", item["id"], {"eval_1t": "ED", "destacado": 1, "nota": "señala 3 de 5"})
     store.actualizar("adaptaciones", d["adaptaciones"][2]["id"], {"tipo": "significativa", "nivel_curricular": "1º de infantil"})
     d = store.obtener_aci(aci)
     datos = exportar_aci(d)
     doc = Document(io.BytesIO(datos))
     assert "Ana" in "\n".join(p.text for p in doc.paragraphs)
+    # Tabla del área: nº | ítem | observaciones | 1T | 2T | 3T
+    tabla = doc.tables[1]
+    cab = [c.text for c in next(r for r in tabla.rows if r.cells[0].text == "TRIMESTRES").cells]
+    assert cab[2:] == ["OBSERVACIONES", "1T", "2T", "3T"]
+    fila = next(r for r in tabla.rows if r.cells[1].text == item["texto"])
+    assert [c.text for c in fila.cells[2:]] == ["señala 3 de 5", "ED", "", ""]
     vuelta = importar_aci(datos)
     assert vuelta["alumno_nombre"] == "Ana"
     assert vuelta["adaptaciones"][2]["tipo"] == "significativa"
     sub = vuelta["areas"][0]["subareas"][0]
     assert sub["nombre"] == "Preverbal"
     it = sub["competencias"][0]["items"][1]
-    assert it["eval_1t"] == "ED" and it["destacado"]
+    assert it["eval_1t"] == "ED" and it["destacado"] and it["nota"] == "señala 3 de 5"
 
 
 @pytest.mark.parametrize("ruta", [p for p in EJEMPLOS if p.exists()])

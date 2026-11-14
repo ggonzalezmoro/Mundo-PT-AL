@@ -152,8 +152,9 @@ def exportar_aci(aci: dict) -> bytes:
     r.bold = True
     r.font.size = Pt(10)
 
+    # Columnas: nº | ítem de evaluación | observaciones | 1T | 2T | 3T
     for ia, area in enumerate(aci.get("areas", []), start=1):
-        t = doc.add_table(rows=0, cols=5)
+        t = doc.add_table(rows=0, cols=6)
         t.style = "Table Grid"
         if ia == 1:
             _fila_completa(t, "Propuesta curricular adaptada:", VERDE_CLARO)
@@ -161,7 +162,8 @@ def exportar_aci(aci: dict) -> bytes:
         fila = t.add_row().cells
         celda = fila[0].merge(fila[1])
         _texto(celda, "TRIMESTRES", negrita=True)
-        for i, tt in enumerate(("1T", "2T", "3T"), start=2):
+        _texto(fila[2], "OBSERVACIONES", negrita=True, centro=True)
+        for i, tt in enumerate(("1T", "2T", "3T"), start=3):
             _texto(fila[i], tt, negrita=True, centro=True)
         n_sub = 0
         for sub in area["subareas"]:
@@ -172,22 +174,19 @@ def exportar_aci(aci: dict) -> bytes:
                 fila = t.add_row().cells
                 num = f"{n_sub}.{ic}" if sub["nombre"] else str(ic)
                 _texto(fila[0], num, negrita=True)
-                celda = fila[1].merge(fila[4])
+                celda = fila[1].merge(fila[5])
                 _texto(celda, f"Competencias y saberes: {comp['nombre']}" if comp["nombre"] else "Competencias y saberes", negrita=True)
                 _sombrear(celda, VERDE_CLARO)
                 for it in comp["items"]:
                     fila = t.add_row().cells
                     _texto(fila[0], "")
                     _texto(fila[1], it["texto"])
-                    if it.get("nota"):
-                        r = fila[1].add_paragraph().add_run(f"{PREFIJO_NOTA} {it['nota']}")
-                        r.italic = True
-                        r.font.size = Pt(8)
                     if it.get("destacado"):
                         _sombrear(fila[1], AMARILLO)
-                    for i, k in enumerate(("eval_1t", "eval_2t", "eval_3t"), start=2):
+                    _texto(fila[2], it.get("nota", ""), tam=8)
+                    for i, k in enumerate(("eval_1t", "eval_2t", "eval_3t"), start=3):
                         _texto(fila[i], it.get(k, ""), centro=True, negrita=True)
-        _anchos(t, [1.3, 18.5, 2.0, 2.0, 2.0])
+        _anchos(t, [1.1, 12.0, 8.7, 1.4, 1.4, 1.4])
         doc.add_paragraph()
 
     p = doc.add_paragraph()
