@@ -34,7 +34,7 @@ CAMPOS_EDITABLES = {
     "tareas": {"texto", "categoria", "alumno_id", "fecha_limite", "hecha", "orden"},
     "citas": {"fecha", "hora_inicio", "hora_fin", "tipo", "alumno_id", "con_quien", "lugar", "notas", "hecha"},
     "materiales": {"titulo"},
-    "calendarios_externos": {"nombre", "color"},
+    "calendarios_externos": {"nombre", "color", "tipo", "visible"},
 }
 
 ADAPTACIONES_POR_DEFECTO = [
@@ -206,6 +206,10 @@ class Store:
             cambios = trabajo.validar(tabla, cambios)
         if tabla == "calendarios_externos" and "color" in cambios and not re.match(r"^#[0-9a-fA-F]{6}$", str(cambios["color"])):
             raise StoreError("Color no válido")
+        if tabla == "calendarios_externos" and "tipo" in cambios and cambios["tipo"] not in ("colegio", "personal"):
+            raise StoreError("El tipo de calendario es «colegio» o «personal»")
+        if tabla == "calendarios_externos" and "visible" in cambios:
+            cambios["visible"] = 1 if cambios["visible"] in (1, True, "1", "true") else 0
         for k in ("eval_1t", "eval_2t", "eval_3t"):
             if k in cambios and cambios[k] not in ("", *ESCALA):
                 raise StoreError(f"Valor de evaluación no válido: {cambios[k]}")

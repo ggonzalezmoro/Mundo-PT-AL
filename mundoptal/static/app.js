@@ -746,6 +746,7 @@ async function vistaAgendaDia(dia) {
     api("GET", `/api/agenda?desde=${dia}&hasta=${dia}`), api("GET", `/api/citas?desde=${dia}&hasta=${dia}`),
     api("GET", "/api/alumnos"), api("GET", "/api/tareas"),
     api("GET", `/api/eventos-externos?desde=${dia}&hasta=${dia}`).catch(() => [])]);
+  const cals = await api("GET", "/api/calendarios").catch(() => []);
   const hoy = hoyISO();
   const recargar = () => vistaAgendaDia(dia);
   const vencen = tareas.filter((t) => !t.hecha && t.fecha_limite === dia);
@@ -765,6 +766,7 @@ async function vistaAgendaDia(dia) {
         <button id="replanificar" title="Vuelve a repartir los ítems de las sesiones aún no realizadas">↻ Replanificar</button>
       </div></div>
     <div id="avisos-agenda"></div>
+    ${htmlEstadoCalendarios(cals)}
     ${htmlFranjaTodoElDia(evs)}
     ${htmlTareasDelDia(vencen)}
     <div class="dia-detalle">
@@ -778,6 +780,8 @@ async function vistaAgendaDia(dia) {
   enlazarSesiones(recargar);
   enlazarCitasYTareas(ci.citas, alumnos, recargar);
   enlazarEventos(evs);
+  enlazarLeyendaCal(cals, recargar);
+  if ($("#actualizar-cal")) $("#actualizar-cal").onclick = () => intentar(async () => { await actualizarCalendarios(0); recargar(); });
   $("#cita-dia").onclick = () => dialogoCita({ fecha: dia }, alumnos, recargar);
 }
 
@@ -1200,6 +1204,7 @@ async function vistaTrabajo(modo, fecha) {
   const citas = [...cal.citas, ...((proximas && proximas.citas) || [])];
   enlazarCitasYTareas(citas, alumnos, recargar);
   enlazarEventos(evs);
+  enlazarLeyendaCal(cals, recargar);
   if ($("#actualizar-cal")) $("#actualizar-cal").onclick = () => intentar(async () => {
     $("#actualizar-cal").disabled = true;
     const r = await actualizarCalendarios(0);
@@ -1363,14 +1368,24 @@ function haceMinutos(iso) {
   const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
   return min < 1 ? "ahora mismo" : min < 60 ? `hace ${min} min` : min < 1440 ? `hace ${Math.round(min / 60)} h` : `hace ${Math.round(min / 1440)} días`;
 }
+// Leyenda de calendarios externos: cada nombre es un botón que muestra u oculta ese calendario
 function htmlEstadoCalendarios(cals) {
   if (!cals.length) return "";
-  const conUrl = cals.filter((c) => c.origen === "url");
+  const conUrl = cals.filter((c) => c.origen === "url" && c.tiene_url);
   const ultima = conUrl.map((c) => c.actualizado).filter(Boolean).sort().pop();
-  const error = cals.find((c) => c.error);
-  return `<div class="estado-cal">${cals.map((c) => `<span class="cal-nombre" style="--ce:${colorCal(c.color)}">📅 ${esc(c.nombre)}</span>`).join("")}
+  const error = cals.find((c) => c.error || c.falta_secreta);
+  return `<div class="estado-cal">${cals.map((c) => `<button type="button" class="cal-nombre ${c.visible ? "" : "oculto"}"
+      style="--ce:${colorCal(c.color)}" data-cal-ver="${c.id}" aria-pressed="${c.visible ? "true" : "false"}"
+      title="${c.visible ? "Ocultar" : "Mostrar"} «${esc(c.nombre)}» (${c.tipo === "personal" ? "personal" : "del colegio"})">${c.visible ? "👁" : "🚫"} ${esc(c.nombre)}</button>`).join("")}
     ${conUrl.length ? `<span class="muted">Actualizado ${haceMinutos(ultima)}</span><button class="mini" id="actualizar-cal">↻ Actualizar</button>` : ""}
-    ${error ? `<span class="error-cal" title="${esc(error.error)}">⚠ ${esc(error.error)}</span>` : ""}</div>`;
+    ${error ? `<a class="error-cal" href="#/ajustes" title="${esc(error.error || "Falta la dirección secreta")}">⚠ ${esc(error.nombre)}: ${esc(error.error || "falta pegar de nuevo la dirección secreta")}</a>` : ""}</div>`;
+}
+function enlazarLeyendaCal(cals, recargar) {
+  $$("[data-cal-ver]").forEach((b) => b.onclick = () => intentar(async () => {
+    const c = cals.find((x) => String(x.id) === b.dataset.calVer);
+    await api("PATCH", `/api/calendarios_externos/${b.dataset.calVer}`, { visible: c && c.visible ? 0 : 1 });
+    recargar();
+  }));
 }
 
 function diasCalendario(desde, hasta) {
@@ -1693,7 +1708,7 @@ async function pintarAjustesMaterial() {
   if ($("#logo-original")) $("#logo-original").onclick = () => intentar(async () => { await api("DELETE", "/api/material/logo"); recargar(); });
 }
 
-const COLORES_CAL = ["#2B7BB9", "#E67C73", "#33B679", "#F6BF26", "#8E24AA", "#F4511E", "#039BE5", "#616161"];
+const COLORES_CAL = ["#7FB3D5", "#F1948A", "#82E0AA", "#F8C471", "#BB8FCE", "#76D7C4", "#F0B27A", "#AEB6BF"];
 
 async function pintarAjustesCalendario() {
   const caja = $("#ajustes-calendario");
@@ -1702,36 +1717,48 @@ async function pintarAjustesCalendario() {
   if (!cals || !caja.isConnected) return;
   const color = COLORES_CAL[cals.length % COLORES_CAL.length];
   caja.innerHTML = `<h2>Google Calendar</h2>
-    <p class="muted" style="margin-top:0">Ves tus calendarios (por ejemplo el del colegio) dentro de «Mi trabajo PT/AL» y en la agenda del día. Solo se leen: la aplicación nunca cambia nada en Google.</p>
+    <p class="muted" style="margin-top:0">Ves tus calendarios (el del colegio, el tuyo…) dentro de «Mi trabajo PT/AL» y en la agenda del día. Solo se leen: nada de lo que creas en la aplicación va a Google.</p>
     ${cals.length ? `<ul class="lista-calendarios">${cals.map((c) => `<li>
+        <input type="checkbox" ${c.visible ? "checked" : ""} data-cal-visible="${c.id}" title="Mostrar en Mi trabajo y en la agenda">
         <input type="color" value="${colorCal(c.color)}" data-cal-color="${c.id}" title="Color">
         <input value="${esc(c.nombre)}" data-cal-nombre="${c.id}" style="flex:1;min-width:120px">
-        <span class="muted">${c.eventos} eventos · ${c.origen === "url" ? "actualizado " + haceMinutos(c.actualizado) : "importado de archivo"}</span>
+        <select data-cal-tipo="${c.id}" title="Tipo"><option value="colegio" ${c.tipo !== "personal" ? "selected" : ""}>Colegio</option>
+          <option value="personal" ${c.tipo === "personal" ? "selected" : ""}>Personal</option></select>
+        <span class="muted">${c.eventos} eventos · ${c.origen === "url" ? (c.secreta ? "🔒 dirección secreta" : "🌐 público") + " · actualizado " + haceMinutos(c.actualizado) : "importado de archivo"}</span>
         ${c.error ? `<span class="error-cal">⚠ ${esc(c.error)}</span>` : ""}
-        ${c.origen === "url" ? `<button class="mini" data-cal-probar="${c.id}">Probar</button>`
-          : `<label class="boton mini" for="reimp-${c.id}">Volver a importar</label><input type="file" id="reimp-${c.id}" data-cal-reimportar="${c.id}" accept=".ics" hidden>`}
+        ${c.falta_secreta ? `<span class="error-cal">⚠ Falta la dirección secreta (no viaja al pasar los datos de ordenador). Pégala de nuevo:</span>
+          <input type="password" data-cal-nueva-url="${c.id}" placeholder="https://calendar.google.com/calendar/ical/…/private-…/basic.ics" autocomplete="off" style="flex:2;min-width:200px">
+          <button class="mini primario" data-cal-guardar-url="${c.id}">Guardar</button>` : ""}
+        ${c.origen === "url" && c.tiene_url ? `<button class="mini" data-cal-probar="${c.id}">Probar</button>` : ""}
+        ${c.origen === "archivo" ? `<label class="boton mini" for="reimp-${c.id}">Volver a importar</label><input type="file" id="reimp-${c.id}" data-cal-reimportar="${c.id}" accept=".ics" hidden>` : ""}
         <button class="mini peligro" data-cal-quitar="${c.id}">Quitar</button></li>`).join("")}</ul>` : ""}
     <h3 style="margin:14px 0 6px">Añadir un calendario</h3>
     <div class="campos">
       <div><label>Nombre</label><input id="cal-nombre" placeholder="Calendario del colegio"></div>
       <div><label>Color</label><input type="color" id="cal-color" value="${color}" style="height:36px"></div>
-      <div class="campo-ancho"><label>Dirección secreta en formato iCal</label>
-        <input type="password" id="cal-url" placeholder="https://calendar.google.com/calendar/ical/…/private-…/basic.ics" autocomplete="off"></div></div>
+      <div><label>Tipo</label><select id="cal-tipo"><option value="colegio">Del colegio</option><option value="personal">Personal</option></select></div>
+      <div class="campo-ancho"><label>Enlace del calendario</label>
+        <input id="cal-url" placeholder="Enlace «Insertar», ID del calendario o dirección iCal (.ics)" autocomplete="off" spellcheck="false"></div></div>
+    <p class="muted" id="cal-previa" style="margin:4px 0 0;font-size:12px"></p>
+    <p style="margin:6px 0 0"><label style="font-weight:400"><input type="checkbox" id="cal-guardar-falla" style="width:auto;display:inline;margin:0 4px 0 0;vertical-align:middle">Guardarlo aunque ahora no se pueda leer (se sincronizará cuando Google lo permita)</label></p>
     <p style="margin:8px 0 0"><button class="primario" id="cal-anadir">Añadir</button>
       <span class="muted">o</span> <label class="boton" for="cal-archivo">📄 Importar archivo .ics</label><input type="file" id="cal-archivo" accept=".ics" hidden></p>
-    <details style="margin-top:10px"><summary>¿Dónde encuentro la dirección secreta?</summary><ol>
+    <details style="margin-top:10px"><summary>¿Qué enlace pego?</summary><ol>
       <li>Abre Google Calendar en el ordenador (calendar.google.com).</li>
-      <li>A la izquierda, pasa el ratón por tu calendario › ⋮ › <strong>Configuración y uso compartido</strong>.</li>
-      <li>Baja hasta <strong>Integrar el calendario</strong> y copia la <strong>Dirección secreta en formato iCal</strong>.</li></ol>
-      <p class="muted">Es privada: quien la tenga puede ver tu calendario. Se guarda en el Administrador de credenciales de Windows, no en los datos de la aplicación. Si no la ves (cuentas del colegio a veces la ocultan), usa «Importar archivo .ics»: en Google Calendar, Configuración › Importar y exportar › Exportar.</p></details>`;
+      <li>A la izquierda, pasa el ratón por el calendario › ⋮ › <strong>Configuración y uso compartido</strong>.</li>
+      <li>En <strong>Integrar el calendario</strong> sirve cualquiera de estas: el <strong>ID de calendario</strong>, la <strong>URL pública</strong> o el código de <strong>Insertar</strong> (solo si el calendario es público), o la <strong>Dirección secreta en formato iCal</strong> (funciona aunque no sea público).</li></ol>
+      <p class="muted">🌐 Si es público, la dirección se guarda con tus datos y viaja con ellos al exportarlos. 🔒 La dirección secreta es como una contraseña: se guarda en el Administrador de credenciales de Windows, no se exporta y en otro ordenador hay que pegarla de nuevo. Si no ves ninguna (las cuentas del colegio a veces lo impiden), usa «Importar archivo .ics»: Configuración › Importar y exportar › Exportar.</p></details>`;
   const recargar = () => pintarAjustesCalendario();
   $("#cal-anadir").onclick = () => intentar(async () => {
     const url = $("#cal-url").value.trim();
     if (!url) { $("#cal-url").focus(); return; }
     $("#cal-anadir").disabled = true;
     try {
-      const r = await api("POST", "/api/calendarios", { nombre: $("#cal-nombre").value, color: $("#cal-color").value, url });
-      aviso(`Calendario añadido (${r.eventos} eventos)`);
+      const r = await api("POST", "/api/calendarios", { nombre: $("#cal-nombre").value, color: $("#cal-color").value, url,
+        tipo: $("#cal-tipo").value, guardar_si_falla: $("#cal-guardar-falla").checked });
+      const n = r.calendarios.length, total = r.calendarios.reduce((a, x) => a + x.eventos, 0);
+      if (r.error) aviso(`Guardado, pero aún no se puede leer: ${r.error}`, true);
+      else aviso(`${n > 1 ? n + " calendarios añadidos" : "Calendario añadido"} (${total} eventos)`);
       recargar();
     } finally { if ($("#cal-anadir")) $("#cal-anadir").disabled = false; }
   });
@@ -1758,6 +1785,28 @@ async function pintarAjustesCalendario() {
   }));
   $$("[data-cal-nombre]").forEach((i) => i.onchange = () => intentar(() => api("PATCH", `/api/calendarios_externos/${i.dataset.calNombre}`, { nombre: i.value })));
   $$("[data-cal-color]").forEach((i) => i.onchange = () => intentar(() => api("PATCH", `/api/calendarios_externos/${i.dataset.calColor}`, { color: i.value })));
+  $$("[data-cal-tipo]").forEach((i) => i.onchange = () => intentar(() => api("PATCH", `/api/calendarios_externos/${i.dataset.calTipo}`, { tipo: i.value })));
+  $$("[data-cal-visible]").forEach((i) => i.onchange = () => intentar(() => api("PATCH", `/api/calendarios_externos/${i.dataset.calVisible}`, { visible: i.checked ? 1 : 0 })));
+  $$("[data-cal-guardar-url]").forEach((b) => b.onclick = () => intentar(async () => {
+    const campo = $(`[data-cal-nueva-url="${b.dataset.calGuardarUrl}"]`);
+    if (!campo.value.trim()) { campo.focus(); return; }
+    const r = await api("PUT", `/api/calendarios/${b.dataset.calGuardarUrl}/url`, { url: campo.value.trim() });
+    aviso(`Dirección guardada (${r.eventos} eventos)`);
+    recargar();
+  }));
+  // Vista previa: qué calendario se va a añadir y si es público o secreto
+  let espera;
+  $("#cal-url").oninput = () => {
+    clearTimeout(espera);
+    const v = $("#cal-url").value.trim();
+    $("#cal-previa").textContent = "";
+    if (!v) return;
+    espera = setTimeout(() => api("POST", "/api/calendarios/normalizar", { url: v }).then((fs) => {
+      $("#cal-previa").textContent = fs.map((f) => (f.secreta
+        ? "🔒 Dirección secreta: se guardará en el Administrador de credenciales y no se exportará."
+        : "🌐 Público: " + decodeURIComponent(f.url.split("/ical/")[1].split("/")[0]))).join(" · ");
+    }).catch((e) => { $("#cal-previa").textContent = "⚠ " + (e.message || e); }), 400);
+  };
 }
 
 async function vistaAjustes() {
@@ -1811,7 +1860,8 @@ function importarDatos(e) {
     const fd = new FormData();
     fd.append("archivo", f);
     const r = await api("POST", "/api/datos/importar", fd);
-    alert(`Datos importados: ${r.usuarios} perfil(es) y ${r.alumnos} alumno(s).\nSi necesitas volver atrás, la copia anterior está en:\n${r.copia_previa}`);
+    alert(`Datos importados: ${r.usuarios} perfil(es) y ${r.alumnos} alumno(s).\nSi necesitas volver atrás, la copia anterior está en:\n${r.copia_previa}`
+      + (r.calendarios_sin_direccion ? `\n\n${r.calendarios_sin_direccion} calendario(s) con dirección secreta: pégala de nuevo en Ajustes › Google Calendar (las direcciones secretas no viajan con los datos).` : ""));
     try { localStorage.removeItem(CLAVE_PERFIL); } catch (err) { /* sin almacenamiento */ }
     location.hash = "#/alumnos";
     location.reload();

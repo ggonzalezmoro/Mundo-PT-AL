@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -203,13 +203,18 @@ CREATE TABLE IF NOT EXISTS materiales (
     creado TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
--- Calendarios externos de solo lectura (Google Calendar…). La URL secreta NO se guarda aquí (keyring)
+-- Calendarios externos de solo lectura (Google Calendar…). La URL pública se guarda aquí (viaja al
+-- exportar los datos); la secreta (/private-…) NUNCA: va al keyring con el nombre «clave_secreta».
 CREATE TABLE IF NOT EXISTS calendarios_externos (
     id INTEGER PRIMARY KEY,
     usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
     nombre TEXT NOT NULL DEFAULT '',
     color TEXT NOT NULL DEFAULT '#2B7BB9',
     origen TEXT NOT NULL DEFAULT 'url',
+    url_publica TEXT NOT NULL DEFAULT '',
+    clave_secreta TEXT NOT NULL DEFAULT '',
+    tipo TEXT NOT NULL DEFAULT 'colegio',
+    visible INTEGER NOT NULL DEFAULT 1,
     actualizado TEXT,
     error TEXT NOT NULL DEFAULT ''
 );
@@ -285,6 +290,12 @@ def _migrar(conn: sqlite3.Connection) -> None:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(sesion_items)")}
         if "observacion" not in cols:
             conn.execute("ALTER TABLE sesion_items ADD COLUMN observacion TEXT NOT NULL DEFAULT ''")
+    if "calendarios_externos" in tablas:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(calendarios_externos)")}
+        for col, tipo in (("url_publica", "TEXT NOT NULL DEFAULT ''"), ("clave_secreta", "TEXT NOT NULL DEFAULT ''"),
+                          ("tipo", "TEXT NOT NULL DEFAULT 'colegio'"), ("visible", "INTEGER NOT NULL DEFAULT 1")):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE calendarios_externos ADD COLUMN {col} {tipo}")
     if "meta" in tablas:
         conn.execute("UPDATE meta SET valor = ? WHERE clave = 'schema_version'", (str(SCHEMA_VERSION),))
 

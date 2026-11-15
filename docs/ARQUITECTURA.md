@@ -33,6 +33,7 @@ y que no dependa de nada instalado en el equipo salvo Windows 10/11.
 | **Sin nube** | Requisito del proyecto y protección de datos de alumnos. |
 | **Actualizaciones con GitHub Releases** | Sin servidores propios: la app consulta `api.github.com/repos/…/releases/latest`, descarga el `.zip`, y un `.bat` espera a que se cierre, copia los archivos (`robocopy /E`) y la vuelve a abrir. Solo se envía la petición de la versión, nunca datos. |
 | **Exportar / importar datos** | Copia completa de la base SQLite (API `backup`). Al importar se valida, se migra al esquema actual y se guarda antes una copia del estado anterior. |
+| **Calendarios externos (`calendario.py`)** | Solo lectura (GET del `.ics`, sentido único). Cualquier forma de enlace se normaliza a una URL `.ics` (`normalizar_fuentes`). La URL pública de Google (`…/public/basic.ics`) va en `calendarios_externos.url_publica` y viaja con los datos; la secreta (`/private-…`, o cualquier `.ics` que no sea de Google) va al keyring con una clave aleatoria (`clave_secreta`), así no se exporta ni choca con los id de otros datos importados. `schema_version` 11. |
 
 ## Modelo de datos
 

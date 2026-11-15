@@ -439,9 +439,14 @@ details.tarjeta.avanzadas:not([open]) { padding-top: 10px; padding-bottom: 10px;
 .franja-todo-dia { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .franja-todo-dia .evento-ext { width: auto; max-width: 100%; font-size: 13px; padding: 4px 10px; }
 .estado-cal { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; margin: -2px 0 8px; }
-.cal-nombre { border-left: 3px solid var(--ce); padding-left: 5px; font-weight: 600; }
+.cal-nombre { border: 1px solid color-mix(in srgb, var(--ce) 60%, white); border-left: 4px solid var(--ce); border-radius: 12px;
+  padding: 2px 9px; font-size: 12px; font-weight: 600; cursor: pointer; background: color-mix(in srgb, var(--ce) 18%, white); color: #263238; }
+.cal-nombre:hover { background: color-mix(in srgb, var(--ce) 30%, white); }
+.cal-nombre.oculto { background: #fff; color: #8a948e; border-color: var(--borde); border-left-color: var(--ce); text-decoration: line-through; }
 .error-cal { color: var(--rojo); font-size: 12px; }
 .lista-calendarios { list-style: none; margin: 0 0 6px; padding: 0; }
 .lista-calendarios li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--borde); }
 .lista-calendarios input[type=color] { width: 36px; height: 30px; padding: 2px; }
+.lista-calendarios select { width: auto; flex: 0 0 auto; }
+.lista-calendarios input[type=checkbox] { width: 18px; height: 18px; flex: 0 0 auto; margin: 0; }
 .sem-cab .evento-ext { width: 100%; }

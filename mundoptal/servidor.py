@@ -139,7 +139,18 @@ def crear_app(db_path: str | Path) -> Flask:
     @app.post("/api/calendarios")
     def calendario_anadir():
         d = cuerpo()
-        return jsonify(calendario.anadir_url(store, usuario_actual(), d.get("nombre", ""), d.get("color", ""), d.get("url", "")))
+        return jsonify(calendario.anadir_url(store, usuario_actual(), d.get("nombre", ""), d.get("color", ""), d.get("url", ""),
+                                             tipo=d.get("tipo", "colegio"), guardar_si_falla=bool(d.get("guardar_si_falla"))))
+
+    @app.post("/api/calendarios/normalizar")
+    def calendario_normalizar():
+        """Vista previa de lo que se va a guardar, sin enseñar nunca la URL secreta."""
+        fuentes = calendario.normalizar_fuentes(cuerpo().get("url", ""))
+        return jsonify([{"url": f if not calendario.es_secreta(f) else "", "secreta": calendario.es_secreta(f)} for f in fuentes])
+
+    @app.put("/api/calendarios/<int:cal_id>/url")
+    def calendario_cambiar_url(cal_id):
+        return jsonify(calendario.cambiar_url(store, cal_id, cuerpo().get("url", "")))
 
     @app.post("/api/calendarios/importar")
     def calendario_importar():
@@ -168,7 +179,7 @@ def crear_app(db_path: str | Path) -> Flask:
     @app.get("/api/eventos-externos")
     def eventos_externos():
         a = request.args
-        return jsonify(calendario.eventos(store, usuario_actual(), a.get("desde", ""), a.get("hasta", "")))
+        return jsonify(calendario.eventos(store, usuario_actual(), a.get("desde", ""), a.get("hasta", ""), a.get("todos") == "1"))
 
     # ------------------------------------------------------------ crear material
     @app.errorhandler(ia_material.ErrorIA)
@@ -647,8 +658,11 @@ def crear_app(db_path: str | Path) -> Flask:
             finally:
                 origen.close()
         usuarios = store.listar_usuarios()
+        # Las direcciones secretas de calendario no viajan con los datos: hay que pegarlas de nuevo
+        sin_dir = sum(1 for c in store.q("SELECT id FROM calendarios_externos WHERE origen = 'url' AND url_publica = ''")
+                      if not calendario.leer_url(store, c["id"]))
         return jsonify(ok=True, copia_previa=str(previa), usuarios=len(usuarios),
-                       alumnos=store.q1("SELECT COUNT(*) AS n FROM alumnos")["n"])
+                       alumnos=store.q1("SELECT COUNT(*) AS n FROM alumnos")["n"], calendarios_sin_direccion=sin_dir)
 
     # ------------------------------------------------------------ actualizaciones
     @app.get("/api/actualizacion")
