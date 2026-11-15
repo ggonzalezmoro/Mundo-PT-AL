@@ -15,7 +15,7 @@ if Path("models").exists():
 # pptx: plantillas internas; anthropic/keyring: «Crear material con Claude» (keyring busca su
 # almacén por metadatos, así que se copian también los de win32ctypes)
 for paquete in ("vosk", "_sounddevice_data", "webview", "docx", "openpyxl", "pptx", "anthropic", "keyring",
-                "win32ctypes", "jaraco"):
+                "win32ctypes", "jaraco", "icalendar", "recurring_ical_events", "x_wr_timezone", "tzdata"):
     try:
         d, b, h = collect_all(paquete)
         datas += d

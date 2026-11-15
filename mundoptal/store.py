@@ -1,6 +1,7 @@
 """Acceso a datos: alumnos, ACIs y su jerarquía Área > Subárea > Competencia > Ítem."""
 from __future__ import annotations
 
+import re
 import threading
 import unicodedata
 from contextlib import contextmanager
@@ -33,6 +34,7 @@ CAMPOS_EDITABLES = {
     "tareas": {"texto", "categoria", "alumno_id", "fecha_limite", "hecha", "orden"},
     "citas": {"fecha", "hora_inicio", "hora_fin", "tipo", "alumno_id", "con_quien", "lugar", "notas", "hecha"},
     "materiales": {"titulo"},
+    "calendarios_externos": {"nombre", "color"},
 }
 
 ADAPTACIONES_POR_DEFECTO = [
@@ -202,6 +204,8 @@ class Store:
         if tabla in ("tareas", "citas"):
             from . import trabajo
             cambios = trabajo.validar(tabla, cambios)
+        if tabla == "calendarios_externos" and "color" in cambios and not re.match(r"^#[0-9a-fA-F]{6}$", str(cambios["color"])):
+            raise StoreError("Color no válido")
         for k in ("eval_1t", "eval_2t", "eval_3t"):
             if k in cambios and cambios[k] not in ("", *ESCALA):
                 raise StoreError(f"Valor de evaluación no válido: {cambios[k]}")

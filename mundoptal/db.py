@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -203,6 +203,31 @@ CREATE TABLE IF NOT EXISTS materiales (
     creado TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Calendarios externos de solo lectura (Google Calendar…). La URL secreta NO se guarda aquí (keyring)
+CREATE TABLE IF NOT EXISTS calendarios_externos (
+    id INTEGER PRIMARY KEY,
+    usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+    nombre TEXT NOT NULL DEFAULT '',
+    color TEXT NOT NULL DEFAULT '#2B7BB9',
+    origen TEXT NOT NULL DEFAULT 'url',
+    actualizado TEXT,
+    error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS eventos_externos (
+    id INTEGER PRIMARY KEY,
+    calendario_id INTEGER NOT NULL REFERENCES calendarios_externos(id) ON DELETE CASCADE,
+    usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+    uid TEXT NOT NULL DEFAULT '',
+    inicio TEXT NOT NULL,
+    fin TEXT NOT NULL,
+    todo_el_dia INTEGER NOT NULL DEFAULT 0,
+    titulo TEXT NOT NULL DEFAULT '',
+    lugar TEXT NOT NULL DEFAULT '',
+    descripcion TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS ix_eventos_ext ON eventos_externos(usuario_id, inicio);
 CREATE INDEX IF NOT EXISTS ix_materiales_usuario ON materiales(usuario_id);
 CREATE INDEX IF NOT EXISTS ix_tareas_usuario ON tareas(usuario_id);
 CREATE INDEX IF NOT EXISTS ix_citas_fecha ON citas(usuario_id, fecha);

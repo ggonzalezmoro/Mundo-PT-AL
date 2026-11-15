@@ -10,7 +10,7 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import actualizador, db as basedatos, dictado, horario, ia_material, informes, maqueta, material, trabajo
+from . import actualizador, calendario, db as basedatos, dictado, horario, ia_material, informes, maqueta, material, trabajo
 from .config import APP_NAME, APP_VERSION, COLEGIO, DIAS, ESCALA, ESCALA_TEXTO, data_dir, static_dir
 from .planificador import Planificador, lunes_de
 from .store import Store, StoreError
@@ -130,6 +130,45 @@ def crear_app(db_path: str | Path) -> Flask:
     @app.get("/api/avisos")
     def avisos():
         return jsonify(trabajo.avisos(store, usuario_actual()))
+
+    # ------------------------------------------------------------ calendarios externos (solo lectura)
+    @app.get("/api/calendarios")
+    def calendarios():
+        return jsonify(calendario.listar(store, usuario_actual()))
+
+    @app.post("/api/calendarios")
+    def calendario_anadir():
+        d = cuerpo()
+        return jsonify(calendario.anadir_url(store, usuario_actual(), d.get("nombre", ""), d.get("color", ""), d.get("url", "")))
+
+    @app.post("/api/calendarios/importar")
+    def calendario_importar():
+        archivo = request.files.get("archivo")
+        if not archivo:
+            raise StoreError("Elige el archivo .ics exportado de tu calendario")
+        f = request.form
+        cal_id = f.get("calendario_id", type=int)
+        return jsonify(calendario.importar_archivo(store, usuario_actual(), f.get("nombre", ""), f.get("color", ""),
+                                                   archivo.read(), cal_id))
+
+    @app.post("/api/calendarios/actualizar")
+    def calendarios_actualizar():
+        minutos = request.args.get("si_antiguo_min", type=int) or 0
+        return jsonify(calendario.actualizar(store, usuario_actual(), minutos))
+
+    @app.post("/api/calendarios/<int:cal_id>/probar")
+    def calendario_probar(cal_id):
+        return jsonify(eventos=calendario.probar(store, cal_id))
+
+    @app.delete("/api/calendarios/<int:cal_id>")
+    def calendario_quitar(cal_id):
+        calendario.quitar(store, cal_id)
+        return jsonify(ok=True)
+
+    @app.get("/api/eventos-externos")
+    def eventos_externos():
+        a = request.args
+        return jsonify(calendario.eventos(store, usuario_actual(), a.get("desde", ""), a.get("hasta", "")))
 
     # ------------------------------------------------------------ crear material
     @app.errorhandler(ia_material.ErrorIA)

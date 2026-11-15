@@ -742,14 +742,16 @@ function enlazarSesiones(recargar) {
 // Día en grande: sesiones y citas de Mi trabajo intercaladas por hora, y tareas que vencen ese día
 async function vistaAgendaDia(dia) {
   await infoTrabajo();
-  const [ag, ci, alumnos, tareas] = await Promise.all([
+  const [ag, ci, alumnos, tareas, evs] = await Promise.all([
     api("GET", `/api/agenda?desde=${dia}&hasta=${dia}`), api("GET", `/api/citas?desde=${dia}&hasta=${dia}`),
-    api("GET", "/api/alumnos"), api("GET", "/api/tareas")]);
+    api("GET", "/api/alumnos"), api("GET", "/api/tareas"),
+    api("GET", `/api/eventos-externos?desde=${dia}&hasta=${dia}`).catch(() => [])]);
   const hoy = hoyISO();
   const recargar = () => vistaAgendaDia(dia);
   const vencen = tareas.filter((t) => !t.hecha && t.fecha_limite === dia);
   const eventos = ordenarPorHora([...ag.sesiones.map((s) => ({ hora: s.inicio, sesion: s })),
-    ...ci.citas.map((c) => ({ hora: c.hora_inicio, cita: c }))]);
+    ...ci.citas.map((c) => ({ hora: c.hora_inicio, cita: c })),
+    ...evs.filter((e) => !e.todo_el_dia && e.inicio.slice(0, 10) === dia).map((e) => ({ hora: horaEv(e), externo: e }))]);
   const lunesDia = lunesISO(dia);
   vista.innerHTML = `
     <div class="cabecera"><div><h1>Agenda de sesiones</h1>
@@ -763,17 +765,19 @@ async function vistaAgendaDia(dia) {
         <button id="replanificar" title="Vuelve a repartir los ítems de las sesiones aún no realizadas">↻ Replanificar</button>
       </div></div>
     <div id="avisos-agenda"></div>
+    ${htmlFranjaTodoElDia(evs)}
     ${htmlTareasDelDia(vencen)}
     <div class="dia-detalle">
       ${eventos.length ? `<div class="linea-tiempo">${eventos.map((e) => `<div class="lt-fila">
           <div class="lt-hora">${e.hora || "—"}</div>
-          <div class="lt-cont">${e.sesion ? htmlSesion(e.sesion) : htmlCitaTarjeta(e.cita)}</div></div>`).join("")}</div>`
+          <div class="lt-cont">${e.sesion ? htmlSesion(e.sesion) : htmlEntrada(e)}</div></div>`).join("")}</div>`
         : `<div class="vacio">No tienes nada este día 🌿<br><span class="muted">Si debería haber sesiones, pulsa «Planificar semana».</span></div>`}
       <p style="margin-top:12px"><button id="cita-dia">＋ Añadir una cita este día</button></p></div>`;
   enlazarPlanificar(lunesDia, sumarDias(lunesDia, 4), recargar);
   pintarAvisos($("#avisos-agenda"));
   enlazarSesiones(recargar);
   enlazarCitasYTareas(ci.citas, alumnos, recargar);
+  enlazarEventos(evs);
   $("#cita-dia").onclick = () => dialogoCita({ fecha: dia }, alumnos, recargar);
 }
 
@@ -856,6 +860,7 @@ function elegirPerfil(u) {
   USUARIO = u;
   guardarPerfil(u.id);
   pintarPerfilLateral();
+  actualizarCalendarios(30);
 }
 
 async function vistaPerfiles() {
@@ -1146,10 +1151,12 @@ async function vistaTrabajo(modo, fecha) {
   }
   const mes = mesDe(ref);
   const pCitas = modo === "mes" ? api("GET", `/api/citas?mes=${mes}`) : api("GET", `/api/citas?desde=${desde}&hasta=${hasta}`);
-  const [tareas, cal, alumnos, ag, proximas] = await Promise.all([
+  const [tareas, cal, alumnos, ag, proximas, cals] = await Promise.all([
     api("GET", "/api/tareas"), pCitas, api("GET", "/api/alumnos"),
     modo === "mes" ? null : api("GET", `/api/agenda?desde=${desde}&hasta=${hasta}`),
-    modo === "mes" ? api("GET", `/api/citas?desde=${hoy}&hasta=${sumarDias(hoy, 90)}`) : null]);
+    modo === "mes" ? api("GET", `/api/citas?desde=${hoy}&hasta=${sumarDias(hoy, 90)}`) : null,
+    api("GET", "/api/calendarios").catch(() => [])]);
+  const evs = cals.length ? await api("GET", `/api/eventos-externos?desde=${modo === "mes" ? cal.desde : desde}&hasta=${modo === "mes" ? cal.hasta : hasta}`).catch(() => []) : [];
   const recargar = () => vistaTrabajo(modo, modo === "mes" ? mes : (modo === "semana" ? desde : ref));
 
   // Cabecera del calendario: selector de vista, navegación y título
@@ -1166,9 +1173,9 @@ async function vistaTrabajo(modo, fecha) {
   }[modo];
 
   let cuerpo;
-  if (modo === "mes") cuerpo = htmlMes(mes, cal, proximas, hoy);
-  else if (modo === "semana") cuerpo = htmlSemanaTrabajo(desde, cal.citas, ag.sesiones, tareas, hoy);
-  else cuerpo = htmlDiaTrabajo(ref, cal.citas, ag.sesiones, tareas);
+  if (modo === "mes") cuerpo = htmlMes(mes, cal, proximas, hoy, evs);
+  else if (modo === "semana") cuerpo = htmlSemanaTrabajo(desde, cal.citas, ag.sesiones, tareas, hoy, evs);
+  else cuerpo = htmlDiaTrabajo(ref, cal.citas, ag.sesiones, tareas, evs);
 
   vista.innerHTML = `
     <div class="cabecera"><div><h1>Mi trabajo PT/AL</h1>
@@ -1185,20 +1192,29 @@ async function vistaTrabajo(modo, fecha) {
           <button class="primario mini" id="nueva-cita">＋ Nueva cita</button></div>
         <div class="leyenda">${Object.entries(TRABAJO.tipos_cita).map(([k, t]) => `<span class="cita ${k}">${esc(t)}</span>`).join("")}
           ${modo === "mes" ? "" : '<span class="sesion-leyenda">Sesiones con alumnos</span>'}</div>
+        ${htmlEstadoCalendarios(cals)}
         ${cuerpo}</div>
     </div>`;
   pintarTareas(tareas, alumnos);
   pintarAvisos($("#avisos-trabajo"), false);
   const citas = [...cal.citas, ...((proximas && proximas.citas) || [])];
   enlazarCitasYTareas(citas, alumnos, recargar);
+  enlazarEventos(evs);
+  if ($("#actualizar-cal")) $("#actualizar-cal").onclick = () => intentar(async () => {
+    $("#actualizar-cal").disabled = true;
+    const r = await actualizarCalendarios(0);
+    const fallos = r.filter((x) => x.error);
+    aviso(fallos.length ? fallos[0].error : "Calendario actualizado", fallos.length > 0);
+    recargar();
+  });
   // Mes: pulsar un día abre la vista Día; el «＋» de cada día crea una cita
   $$(".cal-dia[data-dia]").forEach((d) => d.onclick = (e) => {
-    if (e.target.closest("[data-cita], [data-nueva]")) return;
+    if (e.target.closest("[data-cita], [data-nueva], [data-evento]")) return;
     location.hash = `#/trabajo/dia/${d.dataset.dia}`;
   });
   // Semana: pulsar un hueco crea una cita a esa hora
   $$("[data-nueva]").forEach((b) => b.onclick = (e) => {
-    if (e.target.closest("[data-cita]")) return;
+    if (e.target.closest("[data-cita], [data-evento]")) return;
     e.stopPropagation();
     dialogoCita({ fecha: b.dataset.nueva, hora_inicio: b.dataset.hora || "" }, alumnos, recargar);
   });
@@ -1214,7 +1230,7 @@ function tituloSemana(desde, hasta) {
     : `${d1.getDate()} ${corto(d1)} – ${d2.getDate()} ${corto(d2)} ${d2.getFullYear()}`;
 }
 
-function htmlMes(mes, cal, proximas, hoy) {
+function htmlMes(mes, cal, proximas, hoy, evs = []) {
   const pend = proximas.citas.filter((c) => !c.hecha);
   return `<div class="calendario">${["L", "M", "X", "J", "V", "S", "D"].map((d) => `<div class="cal-dia-nombre">${d}</div>`).join("")}
       ${diasCalendario(cal.desde, cal.hasta).map((f) => {
@@ -1222,6 +1238,7 @@ function htmlMes(mes, cal, proximas, hoy) {
         return `<div class="cal-dia ${mesDe(f) !== mes ? "otro-mes" : ""} ${f === hoy ? "hoy" : ""}" data-dia="${f}" title="Ver el ${fechaLarga(f)}">
           <div class="cal-dia-cab"><span class="num">${Number(f.slice(8))}</span>
             <button type="button" class="cal-mas" data-nueva="${f}" title="Nueva cita el ${fechaLarga(f)}">＋</button></div>
+          ${eventosDelDia(evs, f).map(htmlEventoChip).join("")}
           ${del.map((c) => `<button type="button" class="cita ${c.tipo} ${c.hecha ? "hecha" : ""}" data-cita="${c.id}" title="${esc(TRABAJO.tipos_cita[c.tipo])}">${esc(etiquetaCita(c))}</button>`).join("")}</div>`;
       }).join("")}</div>
     <p class="muted" style="margin:6px 0 0;font-size:12px">Pulsa un día para verlo en detalle, o «＋» para añadir una cita.</p>
@@ -1237,9 +1254,11 @@ const NOMBRES_DIA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sáb
 const horaDe = (h) => (h ? parseInt(h.slice(0, 2), 10) : null);
 
 // Semana: rejilla por horas (para ver los huecos libres) y, en pantallas estrechas, lista por días
-function htmlSemanaTrabajo(desde, citas, sesiones, tareas, hoy) {
+function htmlSemanaTrabajo(desde, citas, sesiones, tareas, hoy, evs = []) {
   const dias = [0, 1, 2, 3, 4, 5, 6].map((i) => sumarDias(desde, i));
-  const horas = [...citas.map((c) => horaDe(c.hora_inicio)), ...sesiones.map((s) => horaDe(s.inicio))].filter((h) => h !== null);
+  const conHora = evs.filter((e) => !e.todo_el_dia);
+  const horas = [...citas.map((c) => horaDe(c.hora_inicio)), ...sesiones.map((s) => horaDe(s.inicio)),
+    ...conHora.filter((e) => e.inicio.slice(0, 10) >= desde).map((e) => horaDe(horaEv(e)))].filter((h) => h !== null);
   const h0 = Math.min(8, ...horas), h1 = Math.max(17, ...horas);
   const rango = Array.from({ length: h1 - h0 + 1 }, (_, i) => h0 + i);
   const vencenEl = (f) => tareas.filter((t) => !t.hecha && t.fecha_limite === f);
@@ -1247,27 +1266,33 @@ function htmlSemanaTrabajo(desde, citas, sesiones, tareas, hoy) {
   const cabecera = dias.map((f, i) => `<a class="sem-cab ${f === hoy ? "hoy" : ""} ${i > 4 ? "finde" : ""}" href="#/trabajo/dia/${f}" title="Ver este día">
       <span>${NOMBRES_DIA[i].slice(0, 3)}</span><strong>${Number(f.slice(8))}</strong>
       ${vencenEl(f).length ? `<span class="sem-tareas" title="Tareas que vencen">📌 ${vencenEl(f).length}</span>` : ""}
+      ${eventosDelDia(evs.filter((e) => e.todo_el_dia), f).map(htmlEventoChip).join("")}
       ${sinHora(f).map((c) => `<button type="button" class="cita ${c.tipo}" data-cita="${c.id}">${esc(etiquetaCita(c))}</button>`).join("")}</a>`).join("");
   const celda = (f, h, i) => {
     const hh = String(h).padStart(2, "0");
     const ses = sesiones.filter((s) => s.fecha === f && horaDe(s.inicio) === h);
     const cis = citas.filter((c) => c.fecha === f && horaDe(c.hora_inicio) === h);
+    const exts = conHora.filter((e) => e.inicio.slice(0, 10) === f && horaDe(horaEv(e)) === h);
     return `<div class="sem-celda ${f === hoy ? "hoy" : ""} ${i > 4 ? "finde" : ""}" data-nueva="${f}" data-hora="${hh}:00" title="Nueva cita el ${fechaLarga(f)} a las ${hh}:00">
       ${ses.map((s) => `<span class="sesion-mini ${s.estado}" title="${esc(s.alumno)} · ${s.inicio}–${s.fin}">${s.inicio} ${esc(s.alumno.split(" ")[0])}</span>`).join("")}
+      ${exts.map(htmlEventoChip).join("")}
       ${cis.map((c) => `<button type="button" class="cita ${c.tipo} ${c.hecha ? "hecha" : ""}" data-cita="${c.id}">${esc(etiquetaCita(c))}</button>`).join("")}</div>`;
   };
   const rejilla = `<div class="semana-rejilla"><div class="sem-esquina"></div>${cabecera}
     ${rango.map((h) => `<div class="sem-hora">${String(h).padStart(2, "0")}:00</div>${dias.map((f, i) => celda(f, h, i)).join("")}`).join("")}</div>`;
   const lista = `<div class="semana-lista">${dias.map((f, i) => {
       const ev = ordenarPorHora([...sesiones.filter((s) => s.fecha === f).map((s) => ({ hora: s.inicio, sesion: s })),
-        ...citas.filter((c) => c.fecha === f).map((c) => ({ hora: c.hora_inicio, cita: c }))]);
+        ...citas.filter((c) => c.fecha === f).map((c) => ({ hora: c.hora_inicio, cita: c })),
+        ...eventosDelDia(evs, f).map((e) => ({ hora: horaEv(e), externo: e }))]);
       return `<div class="sl-dia ${f === hoy ? "hoy" : ""}"><div class="sl-cab"><a href="#/trabajo/dia/${f}"><strong>${NOMBRES_DIA[i]} ${Number(f.slice(8))}</strong></a>
           ${vencenEl(f).length ? `<span class="sem-tareas">📌 ${vencenEl(f).length}</span>` : ""}
           <button type="button" class="mini" data-nueva="${f}">＋ Cita</button></div>
-        ${ev.length ? ev.map((e) => e.sesion ? htmlSesionResumen(e.sesion) : htmlCitaTarjeta(e.cita)).join("") : '<p class="muted sl-vacio">Libre 🌿</p>'}</div>`;
+        ${ev.length ? ev.map(htmlEntrada).join("") : '<p class="muted sl-vacio">Libre 🌿</p>'}</div>`;
     }).join("")}</div>`;
   return `${rejilla}${lista}<p class="muted ayuda-rejilla" style="margin:6px 0 0;font-size:12px">Pulsa un hueco para añadir una cita a esa hora. En gris, tus sesiones con alumnos.</p>`;
 }
+
+const htmlEntrada = (e) => (e.sesion ? htmlSesionResumen(e.sesion) : e.cita ? htmlCitaTarjeta(e.cita) : htmlEventoTarjeta(e.externo));
 
 function htmlSesionResumen(s) {
   const estado = s.falta ? "No vino" : s.estado === "cancelada" ? "Cancelada" : s.estado === "realizada" ? "Realizada" : "";
@@ -1277,14 +1302,75 @@ function htmlSesionResumen(s) {
 }
 
 // Día: lista horaria con citas y sesiones, más las tareas que vencen ese día
-function htmlDiaTrabajo(dia, citas, sesiones, tareas) {
-  const ev = ordenarPorHora([...sesiones.map((s) => ({ hora: s.inicio, sesion: s })), ...citas.map((c) => ({ hora: c.hora_inicio, cita: c }))]);
+function htmlDiaTrabajo(dia, citas, sesiones, tareas, evs = []) {
+  const delDia = eventosDelDia(evs, dia);
+  const ev = ordenarPorHora([...sesiones.map((s) => ({ hora: s.inicio, sesion: s })), ...citas.map((c) => ({ hora: c.hora_inicio, cita: c })),
+    ...delDia.filter((e) => !e.todo_el_dia && e.inicio.slice(0, 10) === dia).map((e) => ({ hora: horaEv(e), externo: e }))]);
   const vencen = tareas.filter((t) => !t.hecha && t.fecha_limite === dia);
-  return `${htmlTareasDelDia(vencen)}
+  return `${htmlFranjaTodoElDia(delDia)}${htmlTareasDelDia(vencen)}
     ${ev.length ? `<div class="linea-tiempo compacta">${ev.map((e) => `<div class="lt-fila"><div class="lt-hora">${e.hora || "—"}</div>
-        <div class="lt-cont">${e.sesion ? htmlSesionResumen(e.sesion) : htmlCitaTarjeta(e.cita)}</div></div>`).join("")}</div>`
+        <div class="lt-cont">${htmlEntrada(e)}</div></div>`).join("")}</div>`
       : `<div class="vacio">No tienes nada este día 🌿</div>`}
     ${sesiones.length ? `<p style="margin:10px 0 0"><a href="#/agenda/dia/${dia}">Abrir las sesiones de este día en la agenda →</a></p>` : ""}`;
+}
+
+// ======================================================================= calendarios externos (solo lectura)
+async function actualizarCalendarios(minutos = 0) {
+  if (!USUARIO) return [];
+  return api("POST", `/api/calendarios/actualizar${minutos ? "?si_antiguo_min=" + minutos : ""}`).catch(() => []);
+}
+const colorCal = (c) => (/^#[0-9a-f]{6}$/i.test(c || "") ? c : "#2B7BB9");
+const eventosDelDia = (evs, f) => evs.filter((e) => e.inicio.slice(0, 10) <= f && e.fin.slice(0, 10) >= f);
+const horaEv = (e) => (e.todo_el_dia ? "" : e.inicio.slice(11, 16));
+function htmlEventoChip(e) {
+  return `<button type="button" class="evento-ext" style="--ce:${colorCal(e.color)}" data-evento="${e.id}"
+    title="${esc(e.calendario)}: ${esc(e.titulo)}">📅 ${horaEv(e) ? horaEv(e) + " " : ""}${esc(e.titulo)}</button>`;
+}
+function htmlEventoTarjeta(e) {
+  const fin = e.todo_el_dia ? "" : e.fin.slice(11, 16);
+  return `<button type="button" class="evento-tarjeta" style="--ce:${colorCal(e.color)}" data-evento="${e.id}">
+    <span class="ct-tipo">📅 ${esc(e.titulo)}</span>
+    <span class="ct-hora">${e.todo_el_dia ? "Todo el día" : horaEv(e) + (fin && fin !== horaEv(e) ? "–" + fin : "")} · ${esc(e.calendario)}</span>
+    ${e.lugar ? `<span class="ct-lugar">📍 ${esc(e.lugar)}</span>` : ""}</button>`;
+}
+function htmlFranjaTodoElDia(evs) {
+  const todos = evs.filter((e) => e.todo_el_dia);
+  return todos.length ? `<div class="franja-todo-dia">${todos.map(htmlEventoChip).join("")}</div>` : "";
+}
+function dialogoEvento(e) {
+  const fecha = (iso) => mayus(fechaLarga(iso.slice(0, 10)));
+  const cuando = e.todo_el_dia
+    ? (e.inicio === e.fin ? `${fecha(e.inicio)} · todo el día` : `Del ${fecha(e.inicio).toLowerCase()} al ${fecha(e.fin).toLowerCase()}`)
+    : `${fecha(e.inicio)} · ${horaEv(e)}${e.fin.slice(11, 16) && e.fin !== e.inicio ? "–" + e.fin.slice(11, 16) : ""}`;
+  dialogo.innerHTML = `<div class="dlg-cab" style="background:${colorCal(e.color)}"><h2>📅 ${esc(e.titulo)}</h2><button id="cerrar">Cerrar</button></div>
+    <div class="dlg-cuerpo"><p><strong>${esc(cuando)}</strong></p>
+      ${e.lugar ? `<p>📍 ${esc(e.lugar)}</p>` : ""}
+      ${e.descripcion ? `<p style="white-space:pre-wrap">${esc(e.descripcion)}</p>` : ""}
+      <p class="muted">Calendario «${esc(e.calendario)}». Es de solo lectura: para cambiarlo, hazlo en Google Calendar.</p></div>`;
+  dialogo.showModal();
+  $("#cerrar").onclick = () => dialogo.close();
+}
+function enlazarEventos(evs) {
+  $$("[data-evento]").forEach((b) => b.onclick = (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const e = evs.find((x) => String(x.id) === b.dataset.evento);
+    if (e) dialogoEvento(e);
+  });
+}
+function haceMinutos(iso) {
+  if (!iso) return "nunca";
+  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  return min < 1 ? "ahora mismo" : min < 60 ? `hace ${min} min` : min < 1440 ? `hace ${Math.round(min / 60)} h` : `hace ${Math.round(min / 1440)} días`;
+}
+function htmlEstadoCalendarios(cals) {
+  if (!cals.length) return "";
+  const conUrl = cals.filter((c) => c.origen === "url");
+  const ultima = conUrl.map((c) => c.actualizado).filter(Boolean).sort().pop();
+  const error = cals.find((c) => c.error);
+  return `<div class="estado-cal">${cals.map((c) => `<span class="cal-nombre" style="--ce:${colorCal(c.color)}">📅 ${esc(c.nombre)}</span>`).join("")}
+    ${conUrl.length ? `<span class="muted">Actualizado ${haceMinutos(ultima)}</span><button class="mini" id="actualizar-cal">↻ Actualizar</button>` : ""}
+    ${error ? `<span class="error-cal" title="${esc(error.error)}">⚠ ${esc(error.error)}</span>` : ""}</div>`;
 }
 
 function diasCalendario(desde, hasta) {
@@ -1607,6 +1693,73 @@ async function pintarAjustesMaterial() {
   if ($("#logo-original")) $("#logo-original").onclick = () => intentar(async () => { await api("DELETE", "/api/material/logo"); recargar(); });
 }
 
+const COLORES_CAL = ["#2B7BB9", "#E67C73", "#33B679", "#F6BF26", "#8E24AA", "#F4511E", "#039BE5", "#616161"];
+
+async function pintarAjustesCalendario() {
+  const caja = $("#ajustes-calendario");
+  if (!USUARIO) { caja.innerHTML = "<h2>Google Calendar</h2><p class='muted'>Elige primero tu perfil.</p>"; return; }
+  const cals = await api("GET", "/api/calendarios").catch(() => null);
+  if (!cals || !caja.isConnected) return;
+  const color = COLORES_CAL[cals.length % COLORES_CAL.length];
+  caja.innerHTML = `<h2>Google Calendar</h2>
+    <p class="muted" style="margin-top:0">Ves tus calendarios (por ejemplo el del colegio) dentro de «Mi trabajo PT/AL» y en la agenda del día. Solo se leen: la aplicación nunca cambia nada en Google.</p>
+    ${cals.length ? `<ul class="lista-calendarios">${cals.map((c) => `<li>
+        <input type="color" value="${colorCal(c.color)}" data-cal-color="${c.id}" title="Color">
+        <input value="${esc(c.nombre)}" data-cal-nombre="${c.id}" style="flex:1;min-width:120px">
+        <span class="muted">${c.eventos} eventos · ${c.origen === "url" ? "actualizado " + haceMinutos(c.actualizado) : "importado de archivo"}</span>
+        ${c.error ? `<span class="error-cal">⚠ ${esc(c.error)}</span>` : ""}
+        ${c.origen === "url" ? `<button class="mini" data-cal-probar="${c.id}">Probar</button>`
+          : `<label class="boton mini" for="reimp-${c.id}">Volver a importar</label><input type="file" id="reimp-${c.id}" data-cal-reimportar="${c.id}" accept=".ics" hidden>`}
+        <button class="mini peligro" data-cal-quitar="${c.id}">Quitar</button></li>`).join("")}</ul>` : ""}
+    <h3 style="margin:14px 0 6px">Añadir un calendario</h3>
+    <div class="campos">
+      <div><label>Nombre</label><input id="cal-nombre" placeholder="Calendario del colegio"></div>
+      <div><label>Color</label><input type="color" id="cal-color" value="${color}" style="height:36px"></div>
+      <div class="campo-ancho"><label>Dirección secreta en formato iCal</label>
+        <input type="password" id="cal-url" placeholder="https://calendar.google.com/calendar/ical/…/private-…/basic.ics" autocomplete="off"></div></div>
+    <p style="margin:8px 0 0"><button class="primario" id="cal-anadir">Añadir</button>
+      <span class="muted">o</span> <label class="boton" for="cal-archivo">📄 Importar archivo .ics</label><input type="file" id="cal-archivo" accept=".ics" hidden></p>
+    <details style="margin-top:10px"><summary>¿Dónde encuentro la dirección secreta?</summary><ol>
+      <li>Abre Google Calendar en el ordenador (calendar.google.com).</li>
+      <li>A la izquierda, pasa el ratón por tu calendario › ⋮ › <strong>Configuración y uso compartido</strong>.</li>
+      <li>Baja hasta <strong>Integrar el calendario</strong> y copia la <strong>Dirección secreta en formato iCal</strong>.</li></ol>
+      <p class="muted">Es privada: quien la tenga puede ver tu calendario. Se guarda en el Administrador de credenciales de Windows, no en los datos de la aplicación. Si no la ves (cuentas del colegio a veces la ocultan), usa «Importar archivo .ics»: en Google Calendar, Configuración › Importar y exportar › Exportar.</p></details>`;
+  const recargar = () => pintarAjustesCalendario();
+  $("#cal-anadir").onclick = () => intentar(async () => {
+    const url = $("#cal-url").value.trim();
+    if (!url) { $("#cal-url").focus(); return; }
+    $("#cal-anadir").disabled = true;
+    try {
+      const r = await api("POST", "/api/calendarios", { nombre: $("#cal-nombre").value, color: $("#cal-color").value, url });
+      aviso(`Calendario añadido (${r.eventos} eventos)`);
+      recargar();
+    } finally { if ($("#cal-anadir")) $("#cal-anadir").disabled = false; }
+  });
+  const subir = (archivo, extra) => intentar(async () => {
+    const fd = new FormData();
+    fd.append("archivo", archivo);
+    Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
+    const r = await api("POST", "/api/calendarios/importar", fd);
+    aviso(`Importados ${r.eventos} eventos`);
+    recargar();
+  });
+  $("#cal-archivo").onchange = (e) => e.target.files[0] && subir(e.target.files[0], { nombre: $("#cal-nombre").value || e.target.files[0].name.replace(/\.ics$/i, ""), color: $("#cal-color").value });
+  $$("[data-cal-reimportar]").forEach((i) => i.onchange = (e) => e.target.files[0] && subir(e.target.files[0], { calendario_id: i.dataset.calReimportar }));
+  $$("[data-cal-probar]").forEach((b) => b.onclick = () => intentar(async () => {
+    const r = await api("POST", `/api/calendarios/${b.dataset.calProbar}/probar`);
+    aviso(`✅ Funciona: ${r.eventos} eventos`);
+    await actualizarCalendarios(0);
+    recargar();
+  }));
+  $$("[data-cal-quitar]").forEach((b) => b.onclick = () => intentar(async () => {
+    if (!confirm("¿Quitar este calendario de la aplicación? (En Google no se borra nada)")) return;
+    await api("DELETE", `/api/calendarios/${b.dataset.calQuitar}`);
+    recargar();
+  }));
+  $$("[data-cal-nombre]").forEach((i) => i.onchange = () => intentar(() => api("PATCH", `/api/calendarios_externos/${i.dataset.calNombre}`, { nombre: i.value })));
+  $$("[data-cal-color]").forEach((i) => i.onchange = () => intentar(() => api("PATCH", `/api/calendarios_externos/${i.dataset.calColor}`, { color: i.value })));
+}
+
 async function vistaAjustes() {
   const voz = await api("GET", "/api/voz");
   vista.innerHTML = `
@@ -1631,8 +1784,10 @@ async function vistaAjustes() {
       ${voz.disponible ? `<p>✅ Dictado sin conexión disponible (el audio no sale del ordenador).</p>`
         : `<p>⚠️ ${esc(voz.motivo)}</p><p class="muted">Mientras tanto puedes usar el dictado de Windows: haz clic en el cuadro de texto y pulsa <strong>Windows + H</strong>.</p>`}
     </div>
+    <div class="tarjeta" id="ajustes-calendario"><h2>Google Calendar</h2><p class="muted">Cargando…</p></div>
     <div class="tarjeta" id="ajustes-material"><h2>Crear material</h2><p class="muted">Cargando…</p></div>`;
   pintarAjustesMaterial();
+  pintarAjustesCalendario();
   $("#copia").onclick = () => intentar(async () => { const r = await api("POST", "/api/copia-seguridad"); aviso("Copia guardada en " + r.ruta); });
   $("#buscar-act").onclick = () => buscarActualizacion(true);
   if (ACTUALIZACION) pintarActualizacion(ACTUALIZACION);
@@ -1713,4 +1868,5 @@ async function buscarActualizacion(manual) {
   pintarPerfilLateral();
   enrutar();
   setTimeout(() => buscarActualizacion(false), 3000);  // aviso discreto si hay versión nueva
+  setTimeout(() => actualizarCalendarios(30), 1500);   // Google Calendar en segundo plano (si hace más de 30 min)
 })();

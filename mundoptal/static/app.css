@@ -426,3 +426,22 @@ button.sugerencia { background: var(--amarillo); border-color: #f0d98a; }
 .nota-amable { margin: 12px 0 0; padding: 8px 12px; border-radius: 8px; background: #f4f7f1; color: var(--texto-2); font-size: 13px; }
 details.avanzadas > summary { cursor: pointer; color: var(--texto-2); font-size: 13px; font-weight: 600; }
 details.tarjeta.avanzadas:not([open]) { padding-top: 10px; padding-bottom: 10px; }
+
+/* ===================================================== calendarios externos (0.6.2) */
+.evento-ext { display: block; width: 100%; text-align: left; font-size: 11px; line-height: 1.25; padding: 2px 5px; border-radius: 5px;
+  border: none; border-left: 3px solid var(--ce); background: color-mix(in srgb, var(--ce) 16%, white); color: #263238;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.evento-ext:hover { background: color-mix(in srgb, var(--ce) 28%, white); }
+.evento-tarjeta { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; border: none;
+  border-left: 5px solid var(--ce); border-radius: 8px; padding: 8px 12px; cursor: pointer; background: color-mix(in srgb, var(--ce) 12%, white); color: #263238; }
+.evento-tarjeta .ct-tipo { font-weight: 700; font-size: 13px; }
+.evento-tarjeta .ct-hora, .evento-tarjeta .ct-lugar { font-size: 12px; color: var(--texto-2); }
+.franja-todo-dia { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.franja-todo-dia .evento-ext { width: auto; max-width: 100%; font-size: 13px; padding: 4px 10px; }
+.estado-cal { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; margin: -2px 0 8px; }
+.cal-nombre { border-left: 3px solid var(--ce); padding-left: 5px; font-weight: 600; }
+.error-cal { color: var(--rojo); font-size: 12px; }
+.lista-calendarios { list-style: none; margin: 0 0 6px; padding: 0; }
+.lista-calendarios li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--borde); }
+.lista-calendarios input[type=color] { width: 36px; height: 30px; padding: 2px; }
+.sem-cab .evento-ext { width: 100%; }
