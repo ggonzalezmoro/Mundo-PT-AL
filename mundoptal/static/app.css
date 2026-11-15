@@ -309,3 +309,97 @@ details.hechas summary { cursor: pointer; color: var(--texto-2); font-weight: 60
 .nueva-tarea #t-texto { flex: 1 1 auto; width: auto; }
 .nueva-tarea select, .nueva-tarea input[type=date] { width: auto; flex: 1 1 130px; }
 .nueva-tarea #t-anadir { flex: none; }
+
+/* ===================================================== vistas Día · Semana · Mes (0.5.1) */
+.boton.mini { padding: 2px 8px; font-size: 12px; border-radius: 6px; }
+.segmentado { display: inline-flex; background: var(--verde-pastel); border: 1px solid var(--borde); border-radius: 99px; padding: 3px; gap: 2px; }
+.segmentado a { padding: 5px 14px; border-radius: 99px; text-decoration: none; color: var(--verde); font-weight: 600; font-size: 13px; transition: background .15s; }
+.segmentado a:hover { background: rgba(255,255,255,.7); }
+.segmentado a.activo { background: var(--verde); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.nav-fechas { display: inline-flex; gap: 4px; align-items: center; }
+.cal-cab h2 { flex: 1; text-align: center; min-width: 0; }
+.titulo-dia { font-size: 16px; color: var(--texto); font-weight: 600; }
+.dia h3 a.abrir-dia { color: inherit; text-decoration: none; display: flex; justify-content: space-between; width: 100%; }
+.dia h3 a.abrir-dia:hover { text-decoration: underline; }
+
+/* Línea de tiempo del día */
+.dia-detalle { max-width: 900px; }
+.linea-tiempo { display: flex; flex-direction: column; gap: 12px; position: relative; }
+.lt-fila { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; align-items: start; }
+.lt-hora { font-weight: 700; color: var(--verde); font-size: 15px; padding-top: 8px; text-align: right; position: relative; }
+.lt-hora::after { content: ""; position: absolute; right: -8px; top: 14px; width: 8px; height: 8px; border-radius: 50%; background: var(--lima); }
+.lt-cont .sesion { padding: 12px 14px; }
+.lt-cont .sesion li { font-size: 13px; }
+.lt-cont .sesion li .ctx { font-size: 11px; }
+.linea-tiempo.compacta { gap: 8px; }
+.linea-tiempo.compacta .lt-fila { grid-template-columns: 52px minmax(0, 1fr); }
+.linea-tiempo.compacta .lt-hora { font-size: 13px; padding-top: 6px; }
+.cita-tarjeta { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; border: none;
+  border-left: 5px solid currentColor; border-radius: 8px; padding: 9px 12px; cursor: pointer; }
+.cita-tarjeta.tutoria_familia { background: #fbeaf4; color: #8a2463; }
+.cita-tarjeta.reunion_terapeutas { background: #efebfa; color: #4b3a8f; }
+.cita-tarjeta.otra { background: #e9f1fc; color: #1f4f8a; }
+.cita-tarjeta.hecha { opacity: .55; }
+.cita-tarjeta .ct-tipo { font-weight: 700; font-size: 13px; }
+.cita-tarjeta .ct-hora { font-size: 12px; }
+.cita-tarjeta .ct-quien { color: var(--texto); font-size: 13px; }
+.cita-tarjeta .ct-lugar, .cita-tarjeta .ct-notas { color: var(--texto-2); font-size: 12px; }
+.tareas-dia { background: var(--amarillo); border: 1px solid #f0d98a; border-radius: var(--radio); padding: 10px 14px; margin-bottom: 14px; }
+.tareas-dia ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.tareas-dia label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.tareas-dia input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--verde); }
+.sesion-resumen { display: block; background: #f3f5f1; border: 1px solid var(--borde); border-left: 5px solid #9aa898; border-radius: 8px;
+  padding: 8px 12px; color: var(--texto); text-decoration: none; font-size: 13px; }
+.sesion-resumen:hover { border-color: var(--lima); }
+.sesion-resumen.realizada { border-left-color: var(--lima); }
+.sesion-resumen.cancelada { opacity: .6; }
+.sr-hora { font-weight: 700; color: var(--texto-2); }
+.sesion-leyenda { display: inline-block; font-size: 11px; padding: 2px 6px; border-radius: 5px; background: #eceeea; color: #55655a; }
+
+/* Mes: cabecera del día con «＋» */
+.cal-dia-cab { display: flex; justify-content: space-between; align-items: center; }
+button.cal-mas { padding: 0 5px; font-size: 12px; line-height: 16px; border: none; background: transparent; color: var(--verde); opacity: 0; border-radius: 4px; }
+.cal-dia:hover button.cal-mas { opacity: 1; }
+button.cal-mas:hover { background: var(--verde-pastel); }
+@media (hover: none) { button.cal-mas { opacity: .7; } }
+
+/* Semana de Mi trabajo: el calendario arriba a todo el ancho */
+.trabajo-grid.modo-semana { grid-template-columns: 1fr; }
+.trabajo-grid.modo-semana #tarjeta-cal { order: -1; }
+.semana-rejilla { display: grid; grid-template-columns: 46px repeat(7, minmax(0, 1fr)); border: 1px solid var(--borde); border-radius: 8px; overflow: hidden; }
+.sem-esquina { background: var(--verde-pastel); border-bottom: 1px solid var(--borde); }
+.sem-cab { background: var(--verde-pastel); border-bottom: 1px solid var(--borde); border-left: 1px solid var(--borde); padding: 5px 4px; text-align: center;
+  text-decoration: none; color: var(--verde); display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+.sem-cab span { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+.sem-cab strong { font-size: 18px; line-height: 1; }
+.sem-cab:hover { background: #d5e8c8; }
+.sem-cab.hoy { background: var(--verde); color: #fff; }
+.sem-cab.finde { color: var(--texto-2); }
+.sem-cab .cita { width: 100%; }
+.sem-tareas { font-size: 10px; background: #fff; color: var(--rojo); border-radius: 99px; padding: 0 5px; }
+.sem-hora { font-size: 11px; color: var(--texto-2); text-align: right; padding: 3px 5px 0 0; border-top: 1px solid var(--borde); background: #fafcf8; }
+.sem-celda { min-height: 38px; border-top: 1px solid var(--borde); border-left: 1px solid var(--borde); padding: 2px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sem-celda:hover { background: #f4faee; box-shadow: inset 0 0 0 2px var(--lima-suave); }
+.sem-celda.hoy { background: #f7fbf2; }
+.sem-celda.finde { background: #f8f8f6; }
+.sesion-mini { display: block; font-size: 10px; background: #eceeea; color: #55655a; border-radius: 4px; padding: 1px 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sesion-mini.realizada { background: #e3f1d3; }
+.sesion-mini.cancelada { text-decoration: line-through; opacity: .6; }
+.semana-lista { display: none; }
+.sl-dia { border: 1px solid var(--borde); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
+.sl-dia.hoy { border: 2px solid var(--verde); }
+.sl-cab { display: flex; align-items: center; gap: 8px; }
+.sl-cab a { color: var(--verde); text-decoration: none; flex: 1; }
+.sl-vacio { margin: 0; font-size: 12px; }
+@media (max-width: 760px) {
+  .semana-rejilla { display: none; }
+  .semana-lista { display: block; }
+  .lt-fila { grid-template-columns: 48px minmax(0, 1fr); gap: 8px; }
+  .lt-hora { font-size: 13px; }
+  .cal-cab h2 { flex-basis: 100%; order: -1; }
+  .calendario .cita { font-size: 10px; padding: 1px 3px; }
+  .cal-dia { min-height: 56px; }
+}
+@media (max-width: 760px) { .ayuda-rejilla { display: none; } }

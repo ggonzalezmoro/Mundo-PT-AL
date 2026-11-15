@@ -93,6 +93,25 @@ def test_migracion_desde_esquema_7(tmp_path):
     assert conn.execute("SELECT valor FROM meta WHERE clave = 'schema_version'").fetchone()[0] == str(db.SCHEMA_VERSION)
 
 
+def test_datos_por_dia_y_por_semana(tmp_path):
+    c, h = _cliente(tmp_path)
+    al = c.post("/api/alumnos", json={"nombre": "Alumna Prueba"}, headers=h).get_json()["id"]
+    for fecha, hora in (("2026-11-16", "16:00"), ("2026-11-16", "09:30"), ("2026-11-18", ""), ("2026-11-23", "10:00")):
+        c.post("/api/citas", json={"fecha": fecha, "hora_inicio": hora, "tipo": "otra"}, headers=h)
+    # Día: solo ese día, ordenado por hora (las citas sin hora, al principio)
+    dia = c.get("/api/citas?desde=2026-11-16&hasta=2026-11-16", headers=h).get_json()["citas"]
+    assert [x["hora_inicio"] for x in dia] == ["09:30", "16:00"]
+    # Semana de lunes a domingo
+    semana = c.get("/api/citas?desde=2026-11-16&hasta=2026-11-22", headers=h).get_json()["citas"]
+    assert [x["fecha"] for x in semana] == ["2026-11-16", "2026-11-16", "2026-11-18"]
+    # La agenda de sesiones también se pide por un solo día
+    c.post("/api/franjas", json={"dia": 0, "inicio": "09:00", "fin": "09:30", "alumnos": [al]}, headers=h)
+    c.post("/api/franjas", json={"dia": 2, "inicio": "11:00", "fin": "11:30", "alumnos": [al]}, headers=h)
+    c.post("/api/planificar", json={"desde": "2026-11-16", "hasta": "2026-11-20"}, headers=h)
+    ag = c.get("/api/agenda?desde=2026-11-18&hasta=2026-11-18", headers=h).get_json()["sesiones"]
+    assert [(s["fecha"], s["inicio"]) for s in ag] == [("2026-11-18", "11:00")]
+
+
 def test_rango_mes():
     assert trabajo.rango_mes("2026-02") == ("2026-01-26", "2026-03-01")
     assert trabajo.rango_mes("2026-12") == ("2026-11-30", "2027-01-03")

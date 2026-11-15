@@ -46,6 +46,19 @@ function fechaISO(d) { return d.toISOString().slice(0, 10); }
 function lunes(d) { const x = new Date(d); x.setHours(12); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; }
 function sumarDias(iso, n) { const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return fechaISO(d); }
 function fechaCorta(iso) { const [y, m, d] = iso.split("-"); return `${d}/${m}`; }
+// Fecha de hoy en hora local (toISOString usa UTC y de madrugada daría el día anterior)
+function hoyISO() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function lunesISO(iso) { return fechaISO(lunes(new Date(iso + "T12:00:00"))); }
+function esFinde(iso) { const d = new Date(iso + "T12:00:00").getDay(); return d === 0 || d === 6; }
+function diaLaborable(iso, paso) { let f = sumarDias(iso, paso); while (esFinde(f)) f = sumarDias(f, paso > 0 ? 1 : -1); return f; }
+// Vista elegida (día/semana/mes) recordada por pantalla
+function leerPref(clave, def) { try { return localStorage.getItem("mundoptal.vista." + clave) || def; } catch (e) { return def; } }
+function guardarPref(clave, v) { try { localStorage.setItem("mundoptal.vista." + clave, v); } catch (e) { /* sin almacenamiento */ } }
+// Selector segmentado «Día · Semana · Mes»: opciones = [[modo, etiqueta, enlace]]
+function selectorVista(actual, opciones) {
+  return `<div class="segmentado" role="tablist" aria-label="Cambiar vista">${opciones.map(([m, t, h]) =>
+    `<a href="${h}" role="tab" aria-selected="${m === actual}" class="${m === actual ? "activo" : ""}">${t}</a>`).join("")}</div>`;
+}
 
 // ======================================================================= rutas
 const rutas = [
@@ -53,12 +66,12 @@ const rutas = [
   [/^#\/alumno\/(\d+)$/, vistaAlumno, "alumnos"],
   [/^#\/aci\/(\d+)$/, vistaACI, "alumnos"],
   [/^#\/horario$/, vistaHorario, "horario"],
-  [/^#\/agenda(?:\/(\d{4}-\d{2}-\d{2}))?$/, vistaAgenda, "agenda"],
+  [/^#\/agenda(?:\/(dia|semana))?(?:\/(\d{4}-\d{2}-\d{2}))?$/, vistaAgenda, "agenda"],
   [/^#\/ajustes$/, vistaAjustes, "ajustes"],
   [/^#\/perfiles$/, vistaPerfiles, "perfiles"],
   [/^#\/informes$/, vistaInformes, "informes"],
   [/^#\/informe\/(\d+)$/, vistaInforme, "informes"],
-  [/^#\/trabajo(?:\/(\d{4}-\d{2}))?$/, vistaTrabajo, "trabajo"],
+  [/^#\/trabajo(?:\/(dia|semana|mes))?(?:\/(\d{4}-\d{2}(?:-\d{2})?))?$/, vistaTrabajo, "trabajo"],
 ];
 
 async function enrutar() {
@@ -647,47 +660,66 @@ function formFranja(f, alumnos) {
 }
 
 // ======================================================================= agenda
-async function vistaAgenda(semana) {
-  const desde = semana || fechaISO(lunes(new Date()));
+// Vista «semana» (lunes a viernes) o «dia» (línea de tiempo con sesiones y citas)
+async function vistaAgenda(modo, fecha) {
+  modo = modo || leerPref("agenda", "semana");
+  guardarPref("agenda", modo);
+  const hoy = hoyISO();
+  if (modo === "dia") return vistaAgendaDia(fecha || (esFinde(hoy) ? diaLaborable(hoy, 1) : hoy));
+  const desde = lunesISO(fecha || hoy);
   const hasta = sumarDias(desde, 4);
   const ag = await api("GET", `/api/agenda?desde=${desde}&hasta=${hasta}`);
-  const hoy = fechaISO(new Date());
   const porDia = INFO.dias.map((_, i) => ag.sesiones.filter((s) => s.fecha === sumarDias(desde, i)));
+  const diaRef = hoy >= desde && hoy <= hasta ? hoy : desde;
   vista.innerHTML = `
     <div class="cabecera"><div><h1>Agenda de sesiones</h1>
       <p class="sub">Semana del ${fechaCorta(desde)} al ${fechaCorta(hasta)}. Los ítems no conseguidos se reparten solos en tus sesiones.</p></div>
       <div class="acciones">
-        <a class="boton" href="#/agenda/${sumarDias(desde, -7)}">◀</a>
-        <a class="boton" href="#/agenda">Esta semana</a>
-        <a class="boton" href="#/agenda/${sumarDias(desde, 7)}">▶</a>
+        ${selectorAgenda("semana", diaRef)}
+        <div class="nav-fechas"><a class="boton" href="#/agenda/semana/${sumarDias(desde, -7)}" title="Semana anterior">◀</a>
+          <a class="boton" href="#/agenda/semana/${lunesISO(hoy)}">Hoy</a>
+          <a class="boton" href="#/agenda/semana/${sumarDias(desde, 7)}" title="Semana siguiente">▶</a></div>
         <button class="primario" id="planificar">⚡ Planificar semana</button>
         <button id="replanificar" title="Vuelve a repartir los ítems de las sesiones aún no realizadas">↻ Replanificar</button>
       </div></div>
     <div id="avisos-agenda"></div>
     ${ag.sesiones.length ? "" : `<div class="vacio" style="margin-bottom:14px">No hay sesiones planificadas esta semana. Configura <a href="#/horario">tu horario</a> y pulsa «Planificar semana».</div>`}
     <div class="semana">${INFO.dias.map((d, i) => { const f = sumarDias(desde, i); return `<div class="dia ${f === hoy ? "hoy" : ""}">
-      <h3>${d} <small>${fechaCorta(f)}</small></h3><div class="bloques">${porDia[i].map(htmlSesion).join("") || '<div class="muted" style="text-align:center;padding:20px 0">—</div>'}</div></div>`; }).join("")}</div>`;
+      <h3><a class="abrir-dia" href="#/agenda/dia/${f}" title="Ver este día en grande">${d} <small>${fechaCorta(f)}</small></a></h3>
+      <div class="bloques">${porDia[i].map(htmlSesion).join("") || '<div class="muted" style="text-align:center;padding:20px 0">—</div>'}</div></div>`; }).join("")}</div>`;
+  enlazarPlanificar(desde, hasta, () => vistaAgenda("semana", desde));
+  pintarAvisos($("#avisos-agenda"));
+  enlazarSesiones(() => vistaAgenda("semana", desde));
+}
 
+function selectorAgenda(actual, dia) {
+  return selectorVista(actual, [["dia", "Día", `#/agenda/dia/${esFinde(dia) ? diaLaborable(dia, 1) : dia}`],
+    ["semana", "Semana", `#/agenda/semana/${lunesISO(dia)}`]]);
+}
+
+function enlazarPlanificar(desde, hasta, recargar) {
   const plan = (re) => intentar(async () => {
     const r = await api("POST", "/api/planificar", { desde, hasta, replanificar: re });
     let txt = `Planificadas ${r.sesiones} sesiones nuevas con ${r.items} ítems`;
     if (r.sin_pendientes.length) txt += `. Sin ítems pendientes: ${r.sin_pendientes.join(", ")}`;
     aviso(txt);
-    vistaAgenda(desde);
+    recargar();
   });
-  pintarAvisos($("#avisos-agenda"));
   $("#planificar").onclick = () => plan(false);
   $("#replanificar").onclick = () => { if (confirm("Se volverán a repartir los ítems de las sesiones no realizadas de esta semana. ¿Continuar?")) plan(true); };
+}
 
+// Botones y campos de las tarjetas de sesión (vista semana y vista día)
+function enlazarSesiones(recargar) {
   $$("[data-sesion-estado]").forEach((b) => b.onclick = () => intentar(async () => {
     await api("PATCH", `/api/sesiones/${b.dataset.id}`, { estado: b.dataset.sesionEstado });
-    vistaAgenda(desde);
+    recargar();
   }));
   $$("[data-falta]").forEach((b) => b.onclick = () => intentar(async () => {
     const motivo = prompt("El alumno no ha venido. Motivo (opcional): enfermedad, cita médica…", "");
     if (motivo === null) return;
     await api("PATCH", `/api/sesiones/${b.dataset.falta}`, { falta: true, motivo });
-    vistaAgenda(desde);
+    recargar();
   }));
   $$("[data-trabajado]").forEach((c) => c.onchange = () => intentar(() =>
     api("PATCH", `/api/sesiones/${c.dataset.sesion}/items/${c.dataset.item}`, { trabajado: c.checked })));
@@ -698,12 +730,88 @@ async function vistaAgenda(semana) {
   }));
   $$("[data-quitar]").forEach((b) => b.onclick = () => intentar(async () => {
     await api("DELETE", `/api/sesiones/${b.dataset.sesion}/items/${b.dataset.item}`);
-    vistaAgenda(desde);
+    recargar();
   }));
   $$("[data-notas]").forEach((t) => t.onchange = () => intentar(() => api("PATCH", `/api/sesiones/${t.dataset.notas}`, { notas: t.value })));
   $$("[data-obs-item]").forEach((t) => t.onchange = () => intentar(() =>
     api("PATCH", `/api/sesiones/${t.dataset.sesion}/items/${t.dataset.item}`, { observacion: t.value })));
   enlazarMicros(vista);
+}
+
+// Día en grande: sesiones y citas de Mi trabajo intercaladas por hora, y tareas que vencen ese día
+async function vistaAgendaDia(dia) {
+  await infoTrabajo();
+  const [ag, ci, alumnos, tareas] = await Promise.all([
+    api("GET", `/api/agenda?desde=${dia}&hasta=${dia}`), api("GET", `/api/citas?desde=${dia}&hasta=${dia}`),
+    api("GET", "/api/alumnos"), api("GET", "/api/tareas")]);
+  const hoy = hoyISO();
+  const recargar = () => vistaAgendaDia(dia);
+  const vencen = tareas.filter((t) => !t.hecha && t.fecha_limite === dia);
+  const eventos = ordenarPorHora([...ag.sesiones.map((s) => ({ hora: s.inicio, sesion: s })),
+    ...ci.citas.map((c) => ({ hora: c.hora_inicio, cita: c }))]);
+  const lunesDia = lunesISO(dia);
+  vista.innerHTML = `
+    <div class="cabecera"><div><h1>Agenda de sesiones</h1>
+      <p class="sub titulo-dia">${mayus(fechaLarga(dia))}${dia === hoy ? ' <span class="chip">hoy</span>' : ""}</p></div>
+      <div class="acciones">
+        ${selectorAgenda("dia", dia)}
+        <div class="nav-fechas"><a class="boton" href="#/agenda/dia/${diaLaborable(dia, -1)}" title="Día anterior">◀</a>
+          <a class="boton" href="#/agenda/dia/${esFinde(hoy) ? diaLaborable(hoy, 1) : hoy}">Hoy</a>
+          <a class="boton" href="#/agenda/dia/${diaLaborable(dia, 1)}" title="Día siguiente">▶</a></div>
+        <button class="primario" id="planificar" title="Planifica la semana de este día">⚡ Planificar semana</button>
+        <button id="replanificar" title="Vuelve a repartir los ítems de las sesiones aún no realizadas">↻ Replanificar</button>
+      </div></div>
+    <div id="avisos-agenda"></div>
+    ${htmlTareasDelDia(vencen)}
+    <div class="dia-detalle">
+      ${eventos.length ? `<div class="linea-tiempo">${eventos.map((e) => `<div class="lt-fila">
+          <div class="lt-hora">${e.hora || "—"}</div>
+          <div class="lt-cont">${e.sesion ? htmlSesion(e.sesion) : htmlCitaTarjeta(e.cita)}</div></div>`).join("")}</div>`
+        : `<div class="vacio">No tienes nada este día 🌿<br><span class="muted">Si debería haber sesiones, pulsa «Planificar semana».</span></div>`}
+      <p style="margin-top:12px"><button id="cita-dia">＋ Añadir una cita este día</button></p></div>`;
+  enlazarPlanificar(lunesDia, sumarDias(lunesDia, 4), recargar);
+  pintarAvisos($("#avisos-agenda"));
+  enlazarSesiones(recargar);
+  enlazarCitasYTareas(ci.citas, alumnos, recargar);
+  $("#cita-dia").onclick = () => dialogoCita({ fecha: dia }, alumnos, recargar);
+}
+
+function ordenarPorHora(eventos) {
+  return eventos.sort((a, b) => (a.hora || "99:99").localeCompare(b.hora || "99:99"));
+}
+const mayus = (s) => s ? s[0].toUpperCase() + s.slice(1) : s;
+
+function htmlCitaTarjeta(c) {
+  const tipo = TRABAJO ? TRABAJO.tipos_cita[c.tipo] : c.tipo;
+  return `<button type="button" class="cita-tarjeta ${c.tipo} ${c.hecha ? "hecha" : ""}" data-cita="${c.id}" title="Pulsa para ver o cambiar la cita">
+    <span class="ct-tipo">${esc(tipo)}${c.hecha ? " · hecha" : ""}</span>
+    <span class="ct-hora">${c.hora_inicio || "Sin hora"}${c.hora_fin ? "–" + c.hora_fin : ""}</span>
+    ${[c.alumno, c.con_quien].filter(Boolean).length ? `<span class="ct-quien">${esc([c.alumno, c.con_quien].filter(Boolean).join(" · "))}</span>` : ""}
+    ${c.lugar ? `<span class="ct-lugar">📍 ${esc(c.lugar)}</span>` : ""}
+    ${c.notas ? `<span class="ct-notas">${esc(c.notas)}</span>` : ""}</button>`;
+}
+
+function htmlTareasDelDia(tareas) {
+  if (!tareas.length) return "";
+  const cats = TRABAJO ? TRABAJO.categorias : {};
+  return `<div class="tareas-dia"><strong>📌 ${tareas.length === 1 ? "Tarea que vence este día" : "Tareas que vencen este día"}</strong>
+    <ul>${tareas.map((t) => `<li><label><input type="checkbox" data-tarea-dia="${t.id}"> ${esc(t.texto)}</label>
+      <span class="cat ${t.categoria}">${esc(cats[t.categoria] || t.categoria)}</span>${t.alumno ? ` <span class="muted">👧 ${esc(t.alumno)}</span>` : ""}</li>`).join("")}</ul></div>`;
+}
+
+// Clic en citas (abre el diálogo) y tic en las tareas del día
+function enlazarCitasYTareas(citas, alumnos, recargar) {
+  $$("[data-cita]").forEach((b) => b.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const c = citas.find((x) => String(x.id) === b.dataset.cita);
+    if (c) dialogoCita(c, alumnos, recargar);
+  });
+  $$("[data-tarea-dia]").forEach((c) => c.onchange = () => intentar(async () => {
+    await api("PATCH", `/api/tareas/${c.dataset.tareaDia}`, { hecha: c.checked });
+    aviso("¡Tarea hecha! ✔");
+    recargar();
+  }));
 }
 
 function htmlSesion(s) {
@@ -999,7 +1107,6 @@ async function pintarNotasInforme(I, esp) {
 let TRABAJO = null;            // categorías y tipos de cita
 let FILTRO_TAREA = "";         // categoría elegida en el filtro de tareas
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
-const hoyISO = () => INFO.hoy || fechaISO(new Date());
 const mesDe = (iso) => iso.slice(0, 7);
 function sumarMeses(mes, n) {
   const [a, m] = mes.split("-").map(Number);
@@ -1019,50 +1126,164 @@ async function infoTrabajo() {
 }
 const etiquetaCita = (c) => [c.hora_inicio, c.alumno || c.con_quien || (TRABAJO ? TRABAJO.tipos_cita[c.tipo] : "")].filter(Boolean).join(" · ");
 
-async function vistaTrabajo(mes) {
+// Vistas «mes», «semana» y «dia» del calendario de citas, con la lista de tareas al lado
+async function vistaTrabajo(modo, fecha) {
   await infoTrabajo();
-  mes = mes || mesDe(hoyISO());
-  const [tareas, cal, proximas, alumnos] = await Promise.all([
-    api("GET", "/api/tareas"), api("GET", `/api/citas?mes=${mes}`),
-    api("GET", `/api/citas?desde=${hoyISO()}&hasta=${sumarDias(hoyISO(), 90)}`), api("GET", "/api/alumnos")]);
+  if (!["dia", "semana", "mes"].includes(modo)) modo = leerPref("trabajo", "mes");
+  guardarPref("trabajo", modo);
+  const hoy = hoyISO();
+  let desde, hasta, ref;  // ref: día de referencia para cambiar de vista
+  if (modo === "mes") {
+    const mes = fecha ? fecha.slice(0, 7) : mesDe(hoy);
+    ref = mes === mesDe(hoy) ? hoy : `${mes}-01`;
+  } else if (modo === "semana") {
+    desde = lunesISO(fecha && fecha.length === 10 ? fecha : hoy);
+    hasta = sumarDias(desde, 6);
+    ref = hoy >= desde && hoy <= hasta ? hoy : desde;
+  } else {
+    desde = hasta = ref = fecha && fecha.length === 10 ? fecha : hoy;
+  }
+  const mes = mesDe(ref);
+  const pCitas = modo === "mes" ? api("GET", `/api/citas?mes=${mes}`) : api("GET", `/api/citas?desde=${desde}&hasta=${hasta}`);
+  const [tareas, cal, alumnos, ag, proximas] = await Promise.all([
+    api("GET", "/api/tareas"), pCitas, api("GET", "/api/alumnos"),
+    modo === "mes" ? null : api("GET", `/api/agenda?desde=${desde}&hasta=${hasta}`),
+    modo === "mes" ? api("GET", `/api/citas?desde=${hoy}&hasta=${sumarDias(hoy, 90)}`) : null]);
+  const recargar = () => vistaTrabajo(modo, modo === "mes" ? mes : (modo === "semana" ? desde : ref));
+
+  // Cabecera del calendario: selector de vista, navegación y título
+  const selector = selectorVista(modo, [["dia", "Día", `#/trabajo/dia/${ref}`],
+    ["semana", "Semana", `#/trabajo/semana/${lunesISO(ref)}`], ["mes", "Mes", `#/trabajo/mes/${mes}`]]);
   const [a, m] = mes.split("-").map(Number);
+  const nav = {
+    mes: [`#/trabajo/mes/${sumarMeses(mes, -1)}`, `#/trabajo/mes/${mesDe(hoy)}`, `#/trabajo/mes/${sumarMeses(mes, 1)}`,
+      `${mayus(MESES[m - 1])} ${a}`, "Mes"],
+    semana: [`#/trabajo/semana/${sumarDias(desde || ref, -7)}`, `#/trabajo/semana/${lunesISO(hoy)}`,
+      `#/trabajo/semana/${sumarDias(desde || ref, 7)}`, desde ? tituloSemana(desde, hasta) : "", "Semana"],
+    dia: [`#/trabajo/dia/${sumarDias(ref, -1)}`, `#/trabajo/dia/${hoy}`, `#/trabajo/dia/${sumarDias(ref, 1)}`,
+      mayus(fechaLarga(ref)) + (ref === hoy ? ' <span class="chip">hoy</span>' : ""), "Día"],
+  }[modo];
+
+  let cuerpo;
+  if (modo === "mes") cuerpo = htmlMes(mes, cal, proximas, hoy);
+  else if (modo === "semana") cuerpo = htmlSemanaTrabajo(desde, cal.citas, ag.sesiones, tareas, hoy);
+  else cuerpo = htmlDiaTrabajo(ref, cal.citas, ag.sesiones, tareas);
+
   vista.innerHTML = `
     <div class="cabecera"><div><h1>Mi trabajo PT/AL</h1>
       <p class="sub">Lo que haces fuera de las sesiones: material, pruebas, correos, tutorías y reuniones.</p></div></div>
     <div id="avisos-trabajo"></div>
-    <div class="trabajo-grid">
+    <div class="trabajo-grid modo-${modo}">
       <div class="tarjeta" id="tarjeta-tareas"></div>
-      <div class="tarjeta"><div class="cal-cab">
-          <a class="boton mini" href="#/trabajo/${sumarMeses(mes, -1)}" title="Mes anterior">◀</a>
-          <h2>${MESES[m - 1][0].toUpperCase() + MESES[m - 1].slice(1)} ${a}</h2>
-          <a class="boton mini" href="#/trabajo/${sumarMeses(mes, 1)}" title="Mes siguiente">▶</a>
-          <a class="boton mini" href="#/trabajo">Hoy</a>
+      <div class="tarjeta" id="tarjeta-cal"><div class="cal-cab">
+          ${selector}
+          <div class="nav-fechas"><a class="boton mini" href="${nav[0]}" title="${nav[4]} anterior">◀</a>
+            <a class="boton mini" href="${nav[1]}">Hoy</a>
+            <a class="boton mini" href="${nav[2]}" title="${nav[4]} siguiente">▶</a></div>
+          <h2>${nav[3]}</h2>
           <button class="primario mini" id="nueva-cita">＋ Nueva cita</button></div>
-        <div class="leyenda">${Object.entries(TRABAJO.tipos_cita).map(([k, t]) => `<span class="cita ${k}">${esc(t)}</span>`).join("")}</div>
-        <div class="calendario">${["L", "M", "X", "J", "V", "S", "D"].map((d) => `<div class="cal-dia-nombre">${d}</div>`).join("")}
-          ${diasCalendario(cal.desde, cal.hasta).map((f) => {
-            const del = cal.citas.filter((c) => c.fecha === f);
-            return `<div class="cal-dia ${mesDe(f) !== mes ? "otro-mes" : ""} ${f === hoyISO() ? "hoy" : ""}" data-dia="${f}" title="Pulsa para añadir una cita el ${fechaLarga(f)}">
-              <span class="num">${Number(f.slice(8))}</span>
-              ${del.map((c) => `<button type="button" class="cita ${c.tipo} ${c.hecha ? "hecha" : ""}" data-cita="${c.id}" title="${esc(TRABAJO.tipos_cita[c.tipo])}">${esc(etiquetaCita(c))}</button>`).join("")}</div>`;
-          }).join("")}</div>
-        <h3 style="margin:16px 0 6px">Próximas citas</h3>
-        ${proximas.citas.filter((c) => !c.hecha).length ? `<ul class="lista-citas">${proximas.citas.filter((c) => !c.hecha).slice(0, 12).map((c) => `<li>
-            <button type="button" class="cita ${c.tipo}" data-cita="${c.id}">${esc(TRABAJO.tipos_cita[c.tipo])}</button>
-            <strong>${fechaLarga(c.fecha)}</strong>${c.hora_inicio ? ` · ${c.hora_inicio}${c.hora_fin ? "–" + c.hora_fin : ""}` : ""}
-            ${c.alumno ? ` · ${esc(c.alumno)}` : ""}${c.con_quien ? ` · ${esc(c.con_quien)}` : ""}${c.lugar ? ` · <span class="muted">${esc(c.lugar)}</span>` : ""}</li>`).join("")}</ul>`
-          : `<p class="muted">No tienes citas en los próximos tres meses.</p>`}</div>
+        <div class="leyenda">${Object.entries(TRABAJO.tipos_cita).map(([k, t]) => `<span class="cita ${k}">${esc(t)}</span>`).join("")}
+          ${modo === "mes" ? "" : '<span class="sesion-leyenda">Sesiones con alumnos</span>'}</div>
+        ${cuerpo}</div>
     </div>`;
   pintarTareas(tareas, alumnos);
   pintarAvisos($("#avisos-trabajo"), false);
-  const todas = [...cal.citas, ...proximas.citas];
-  $$(".cal-dia").forEach((d) => d.onclick = (e) => {
-    if (e.target.closest("[data-cita]")) return;
-    dialogoCita({ fecha: d.dataset.dia }, alumnos, () => vistaTrabajo(mes));
+  const citas = [...cal.citas, ...((proximas && proximas.citas) || [])];
+  enlazarCitasYTareas(citas, alumnos, recargar);
+  // Mes: pulsar un día abre la vista Día; el «＋» de cada día crea una cita
+  $$(".cal-dia[data-dia]").forEach((d) => d.onclick = (e) => {
+    if (e.target.closest("[data-cita], [data-nueva]")) return;
+    location.hash = `#/trabajo/dia/${d.dataset.dia}`;
   });
-  $$("[data-cita]").forEach((b) => b.onclick = () =>
-    dialogoCita(todas.find((c) => String(c.id) === b.dataset.cita), alumnos, () => vistaTrabajo(mes)));
-  $("#nueva-cita").onclick = () => dialogoCita({ fecha: mesDe(hoyISO()) === mes ? hoyISO() : `${mes}-01` }, alumnos, () => vistaTrabajo(mes));
+  // Semana: pulsar un hueco crea una cita a esa hora
+  $$("[data-nueva]").forEach((b) => b.onclick = (e) => {
+    if (e.target.closest("[data-cita]")) return;
+    e.stopPropagation();
+    dialogoCita({ fecha: b.dataset.nueva, hora_inicio: b.dataset.hora || "" }, alumnos, recargar);
+  });
+  $("#nueva-cita").onclick = () => dialogoCita({ fecha: modo === "semana" && !(hoy >= desde && hoy <= hasta) ? desde : ref },
+    alumnos, recargar);
+}
+
+function tituloSemana(desde, hasta) {
+  const d1 = new Date(desde + "T12:00:00"), d2 = new Date(hasta + "T12:00:00");
+  const corto = (d) => MESES[d.getMonth()].slice(0, 3);
+  return d1.getMonth() === d2.getMonth()
+    ? `${d1.getDate()} – ${d2.getDate()} ${corto(d2)} ${d2.getFullYear()}`
+    : `${d1.getDate()} ${corto(d1)} – ${d2.getDate()} ${corto(d2)} ${d2.getFullYear()}`;
+}
+
+function htmlMes(mes, cal, proximas, hoy) {
+  const pend = proximas.citas.filter((c) => !c.hecha);
+  return `<div class="calendario">${["L", "M", "X", "J", "V", "S", "D"].map((d) => `<div class="cal-dia-nombre">${d}</div>`).join("")}
+      ${diasCalendario(cal.desde, cal.hasta).map((f) => {
+        const del = cal.citas.filter((c) => c.fecha === f);
+        return `<div class="cal-dia ${mesDe(f) !== mes ? "otro-mes" : ""} ${f === hoy ? "hoy" : ""}" data-dia="${f}" title="Ver el ${fechaLarga(f)}">
+          <div class="cal-dia-cab"><span class="num">${Number(f.slice(8))}</span>
+            <button type="button" class="cal-mas" data-nueva="${f}" title="Nueva cita el ${fechaLarga(f)}">＋</button></div>
+          ${del.map((c) => `<button type="button" class="cita ${c.tipo} ${c.hecha ? "hecha" : ""}" data-cita="${c.id}" title="${esc(TRABAJO.tipos_cita[c.tipo])}">${esc(etiquetaCita(c))}</button>`).join("")}</div>`;
+      }).join("")}</div>
+    <p class="muted" style="margin:6px 0 0;font-size:12px">Pulsa un día para verlo en detalle, o «＋» para añadir una cita.</p>
+    <h3 style="margin:16px 0 6px">Próximas citas</h3>
+    ${pend.length ? `<ul class="lista-citas">${pend.slice(0, 12).map((c) => `<li>
+        <button type="button" class="cita ${c.tipo}" data-cita="${c.id}">${esc(TRABAJO.tipos_cita[c.tipo])}</button>
+        <a href="#/trabajo/dia/${c.fecha}"><strong>${fechaLarga(c.fecha)}</strong></a>${c.hora_inicio ? ` · ${c.hora_inicio}${c.hora_fin ? "–" + c.hora_fin : ""}` : ""}
+        ${c.alumno ? ` · ${esc(c.alumno)}` : ""}${c.con_quien ? ` · ${esc(c.con_quien)}` : ""}${c.lugar ? ` · <span class="muted">${esc(c.lugar)}</span>` : ""}</li>`).join("")}</ul>`
+      : `<p class="muted">No tienes citas en los próximos tres meses.</p>`}`;
+}
+
+const NOMBRES_DIA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+const horaDe = (h) => (h ? parseInt(h.slice(0, 2), 10) : null);
+
+// Semana: rejilla por horas (para ver los huecos libres) y, en pantallas estrechas, lista por días
+function htmlSemanaTrabajo(desde, citas, sesiones, tareas, hoy) {
+  const dias = [0, 1, 2, 3, 4, 5, 6].map((i) => sumarDias(desde, i));
+  const horas = [...citas.map((c) => horaDe(c.hora_inicio)), ...sesiones.map((s) => horaDe(s.inicio))].filter((h) => h !== null);
+  const h0 = Math.min(8, ...horas), h1 = Math.max(17, ...horas);
+  const rango = Array.from({ length: h1 - h0 + 1 }, (_, i) => h0 + i);
+  const vencenEl = (f) => tareas.filter((t) => !t.hecha && t.fecha_limite === f);
+  const sinHora = (f) => citas.filter((c) => c.fecha === f && !c.hora_inicio);
+  const cabecera = dias.map((f, i) => `<a class="sem-cab ${f === hoy ? "hoy" : ""} ${i > 4 ? "finde" : ""}" href="#/trabajo/dia/${f}" title="Ver este día">
+      <span>${NOMBRES_DIA[i].slice(0, 3)}</span><strong>${Number(f.slice(8))}</strong>
+      ${vencenEl(f).length ? `<span class="sem-tareas" title="Tareas que vencen">📌 ${vencenEl(f).length}</span>` : ""}
+      ${sinHora(f).map((c) => `<button type="button" class="cita ${c.tipo}" data-cita="${c.id}">${esc(etiquetaCita(c))}</button>`).join("")}</a>`).join("");
+  const celda = (f, h, i) => {
+    const hh = String(h).padStart(2, "0");
+    const ses = sesiones.filter((s) => s.fecha === f && horaDe(s.inicio) === h);
+    const cis = citas.filter((c) => c.fecha === f && horaDe(c.hora_inicio) === h);
+    return `<div class="sem-celda ${f === hoy ? "hoy" : ""} ${i > 4 ? "finde" : ""}" data-nueva="${f}" data-hora="${hh}:00" title="Nueva cita el ${fechaLarga(f)} a las ${hh}:00">
+      ${ses.map((s) => `<span class="sesion-mini ${s.estado}" title="${esc(s.alumno)} · ${s.inicio}–${s.fin}">${s.inicio} ${esc(s.alumno.split(" ")[0])}</span>`).join("")}
+      ${cis.map((c) => `<button type="button" class="cita ${c.tipo} ${c.hecha ? "hecha" : ""}" data-cita="${c.id}">${esc(etiquetaCita(c))}</button>`).join("")}</div>`;
+  };
+  const rejilla = `<div class="semana-rejilla"><div class="sem-esquina"></div>${cabecera}
+    ${rango.map((h) => `<div class="sem-hora">${String(h).padStart(2, "0")}:00</div>${dias.map((f, i) => celda(f, h, i)).join("")}`).join("")}</div>`;
+  const lista = `<div class="semana-lista">${dias.map((f, i) => {
+      const ev = ordenarPorHora([...sesiones.filter((s) => s.fecha === f).map((s) => ({ hora: s.inicio, sesion: s })),
+        ...citas.filter((c) => c.fecha === f).map((c) => ({ hora: c.hora_inicio, cita: c }))]);
+      return `<div class="sl-dia ${f === hoy ? "hoy" : ""}"><div class="sl-cab"><a href="#/trabajo/dia/${f}"><strong>${NOMBRES_DIA[i]} ${Number(f.slice(8))}</strong></a>
+          ${vencenEl(f).length ? `<span class="sem-tareas">📌 ${vencenEl(f).length}</span>` : ""}
+          <button type="button" class="mini" data-nueva="${f}">＋ Cita</button></div>
+        ${ev.length ? ev.map((e) => e.sesion ? htmlSesionResumen(e.sesion) : htmlCitaTarjeta(e.cita)).join("") : '<p class="muted sl-vacio">Libre 🌿</p>'}</div>`;
+    }).join("")}</div>`;
+  return `${rejilla}${lista}<p class="muted ayuda-rejilla" style="margin:6px 0 0;font-size:12px">Pulsa un hueco para añadir una cita a esa hora. En gris, tus sesiones con alumnos.</p>`;
+}
+
+function htmlSesionResumen(s) {
+  const estado = s.falta ? "No vino" : s.estado === "cancelada" ? "Cancelada" : s.estado === "realizada" ? "Realizada" : "";
+  return `<a class="sesion-resumen ${s.estado}" href="#/agenda/dia/${s.fecha}" title="Abrir en la agenda de sesiones">
+    <span class="sr-hora">${s.inicio}–${s.fin}</span> <strong>${esc(s.alumno)}</strong> <span class="chip">${s.especialidad}</span>
+    <span class="muted">${s.items.length} ${s.items.length === 1 ? "ítem" : "ítems"}</span>${estado ? ` <span class="chip ${s.falta ? "falta" : ""}">${estado}</span>` : ""}</a>`;
+}
+
+// Día: lista horaria con citas y sesiones, más las tareas que vencen ese día
+function htmlDiaTrabajo(dia, citas, sesiones, tareas) {
+  const ev = ordenarPorHora([...sesiones.map((s) => ({ hora: s.inicio, sesion: s })), ...citas.map((c) => ({ hora: c.hora_inicio, cita: c }))]);
+  const vencen = tareas.filter((t) => !t.hecha && t.fecha_limite === dia);
+  return `${htmlTareasDelDia(vencen)}
+    ${ev.length ? `<div class="linea-tiempo compacta">${ev.map((e) => `<div class="lt-fila"><div class="lt-hora">${e.hora || "—"}</div>
+        <div class="lt-cont">${e.sesion ? htmlSesionResumen(e.sesion) : htmlCitaTarjeta(e.cita)}</div></div>`).join("")}</div>`
+      : `<div class="vacio">No tienes nada este día 🌿</div>`}
+    ${sesiones.length ? `<p style="margin:10px 0 0"><a href="#/agenda/dia/${dia}">Abrir las sesiones de este día en la agenda →</a></p>` : ""}`;
 }
 
 function diasCalendario(desde, hasta) {
