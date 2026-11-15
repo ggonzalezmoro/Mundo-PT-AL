@@ -313,17 +313,33 @@ def crear(store: Store, alumno_id: int, trimestre: int | None = None, curso_esco
              al.get("curso") or (aci or {}).get("curso", ""),
              maestra or (aci or {}).get("prof_ptal", ""), (aci or {}).get("prof_area", ""), DESPEDIDAS[trimestre]))
         informe_id = cur.lastrowid
-        _insertar_areas(store, informe_id, aci, trimestre, al["nombre"])
+        _insertar_areas(store, informe_id, aci, trimestre, al["nombre"], alumno_id, curso_escolar)
     return informe_id
 
 
-def _insertar_areas(store: Store, informe_id: int, aci: dict | None, trimestre: int, nombre: str):
+MAX_OBS_POR_AREA = 3
+
+
+def _insertar_areas(store: Store, informe_id: int, aci: dict | None, trimestre: int, nombre: str,
+                    alumno_id: int | None = None, curso_escolar: str = ""):
     if not aci or not aci.get("areas"):
         return
     pila = _nombre_pila(nombre)
+    # Observaciones de la agenda de este trimestre, por área (se emparejan por nombre de área
+    # porque cada trimestre puede tener su propia copia de la ACI)
+    obs_area: dict[str, list[dict]] = {}
+    if alumno_id:
+        for o in observaciones_items(store, alumno_id, trimestre, curso_escolar):
+            obs_area.setdefault(_clave_area(o["area"]), []).append(o)
     for i, a in enumerate(aci["areas"]):
+        texto = borrador_area(a, trimestre, pila, i)
+        extra = [redactar_observacion(o, pila, i + j)
+                 for j, o in enumerate(obs_area.get(_clave_area(a["nombre"]), [])[:MAX_OBS_POR_AREA])]
+        extra = [e for e in extra if e]
+        if extra:
+            texto = f"{texto} {' '.join(extra)}"
         store.conn.execute("INSERT INTO informe_areas(informe_id, area, texto, orden) VALUES (?, ?, ?, ?)",
-                           (informe_id, a["nombre"] or "Área", borrador_area(a, trimestre, pila, i), i))
+                           (informe_id, a["nombre"] or "Área", texto, i))
 
 
 def rehacer_areas(store: Store, informe_id: int) -> None:
@@ -339,7 +355,7 @@ def rehacer_areas(store: Store, informe_id: int) -> None:
         store.conn.execute("DELETE FROM informe_areas WHERE informe_id = ?", (informe_id,))
         store.conn.execute("UPDATE informes SET aci_id = ?, actualizado = CURRENT_TIMESTAMP WHERE id = ?",
                            (aci["id"], informe_id))
-        _insertar_areas(store, informe_id, aci, inf["trimestre"], inf["nombre"])
+        _insertar_areas(store, informe_id, aci, inf["trimestre"], inf["nombre"], inf["alumno_id"], inf["curso_escolar"])
 
 
 def anadir_area(store: Store, informe_id: int, area: str = "") -> int:
@@ -430,10 +446,15 @@ def notas_trimestre(store: Store, informe_id: int) -> dict:
            JOIN items i ON i.id = si.item_id
            WHERE se.alumno_id = ? AND se.fecha BETWEEN ? AND ? AND si.trabajado = 1
            ORDER BY se.fecha""", (inf["alumno_id"], desde, hasta))
+    al = store.q1("SELECT nombre FROM alumnos WHERE id = ?", (inf["alumno_id"],)) or {}
+    obs = observaciones_items(store, inf["alumno_id"], inf["trimestre"], inf["curso_escolar"])
+    for i, o in enumerate(obs):
+        o["redactada"] = redactar_observacion(o, _nombre_pila(al.get("nombre", "")), i)
     return {"desde": desde, "hasta": hasta,
             "asistencia": asistencia(store, inf["alumno_id"], inf["trimestre"], inf["curso_escolar"]),
             "notas": [s for s in sesiones if (s["notas"] or "").strip()],
-            "sesiones": len(sesiones), "items": [i["texto"] for i in items]}
+            "sesiones": len(sesiones), "items": [i["texto"] for i in items],
+            "observaciones": obs}
 
 
 def pulir_nota(texto: str) -> str:
@@ -454,6 +475,76 @@ def pulir_nota(texto: str) -> str:
     # mayúscula tras cada punto
     t = re.sub(r"([.!?]\s+)(\w)", lambda m: m.group(1) + m.group(2).upper(), t)
     return t if t[-1] in ".!?" else t + "."
+
+
+def observaciones_items(store: Store, alumno_id: int, trimestre: int, curso_escolar: str) -> list[dict]:
+    """Observaciones rápidas escritas en la agenda junto a cada ítem, agrupadas por ítem
+    (en orden de fecha) y con el área de la ACI a la que pertenece el ítem."""
+    desde, hasta = rango_trimestre(trimestre, curso_escolar)
+    filas = store.q(
+        """SELECT i.id AS item_id, i.texto, i.eval_1t, i.eval_2t, i.eval_3t, a.nombre AS area,
+                  c.nombre AS competencia, se.fecha, si.observacion
+           FROM sesion_items si JOIN sesiones se ON se.id = si.sesion_id
+           JOIN items i ON i.id = si.item_id JOIN competencias c ON c.id = i.competencia_id
+           JOIN subareas s ON s.id = c.subarea_id JOIN areas a ON a.id = s.area_id
+           WHERE se.alumno_id = ? AND se.fecha BETWEEN ? AND ? AND se.estado != 'cancelada'
+             AND TRIM(si.observacion) != ''
+           ORDER BY a.orden, s.orden, c.orden, i.orden, se.fecha""", (alumno_id, desde, hasta))
+    por_item: dict[int, dict] = {}
+    for f in filas:
+        d = por_item.setdefault(f["item_id"], {
+            "item_id": f["item_id"], "texto": f["texto"], "area": f["area"], "competencia": f["competencia"],
+            "evaluacion": evaluacion_actual(f, trimestre), "notas": []})
+        d["notas"].append({"fecha": f["fecha"], "texto": f["observacion"]})
+    return list(por_item.values())
+
+
+CIERRES_EN_PROCESO = [
+    "Aun así, todavía es un objetivo en proceso y seguiremos trabajándolo.",
+    "Es un aspecto que todavía está en proceso, por lo que continuaremos reforzándolo.",
+    "Todavía necesita apoyo en este objetivo, así que seguiremos trabajándolo en las sesiones.",
+]
+
+
+def redactar_observacion(obs: dict, nombre: str = "", indice: int = 0) -> str:
+    """Convierte las notas rápidas de un ítem en un texto profesional, real y amable.
+
+    Nunca hace que un ítem no evaluado con C suene a conseguido: se rebajan las
+    expresiones de logro y se cierra recordando que sigue en proceso."""
+    conseguido = obs.get("evaluacion") == "C"
+    vistas, frases = set(), []
+    for n in obs.get("notas", []):
+        p = pulir_nota(n["texto"] if isinstance(n, dict) else n)
+        clave = p.lower().strip(" .")
+        if p and clave not in vistas:
+            vistas.add(clave)
+            frases.append(redaccion.clausula(p, conseguido, nombre))
+    frases = [f for f in frases if f]
+    if not frases:
+        return ""
+    accion = redaccion.redactar_item(obs.get("texto", ""), con_detalle=False)
+    if not conseguido:
+        accion = redaccion.sin_comenzar(accion)
+    marco = f"Al trabajar {accion[len('lo relativo a '):]}" if accion.startswith("lo relativo a ") else \
+        f"En las actividades para {accion}" if accion else "En las sesiones"
+    if len(frases) == 1:
+        texto = f"{marco}, hemos observado que {frases[0]}."
+    else:
+        if len(frases) > 4:
+            frases = [frases[0], *frases[1:-1][-2:], frases[-1]]
+        partes = [f"{marco}, al principio del trimestre observamos que {frases[0]}."]
+        for f in frases[1:-1]:
+            partes.append(f"Más adelante, {f}.")
+        partes.append(f"En las últimas sesiones, {frases[-1]}.")
+        texto = " ".join(partes)
+    texto = re.sub(r"\s+([,.])", r"\1", texto).replace("..", ".")
+    if not conseguido:
+        texto += " " + CIERRES_EN_PROCESO[indice % len(CIERRES_EN_PROCESO)]
+    return texto
+
+
+def _clave_area(nombre: str) -> str:
+    return redaccion._sin_tilde(_nombre_area(nombre or "")).lower().strip()
 
 
 def redactar_notas(datos: dict, nombre: str) -> str:

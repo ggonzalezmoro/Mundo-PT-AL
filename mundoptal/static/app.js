@@ -687,6 +687,8 @@ async function vistaAgenda(semana) {
     vistaAgenda(desde);
   }));
   $$("[data-notas]").forEach((t) => t.onchange = () => intentar(() => api("PATCH", `/api/sesiones/${t.dataset.notas}`, { notas: t.value })));
+  $$("[data-obs-item]").forEach((t) => t.onchange = () => intentar(() =>
+    api("PATCH", `/api/sesiones/${t.dataset.sesion}/items/${t.dataset.item}`, { observacion: t.value })));
   enlazarMicros(vista);
 }
 
@@ -699,7 +701,9 @@ function htmlSesion(s) {
       <div>${esc(it.texto)}<div class="ctx">${esc(it.subarea || it.area)} · ${esc(it.competencia)}</div>
         <div class="pie-item"><select title="Evaluación del trimestre actual" class="${claseEval(it.evaluacion)}" data-evaluar data-sesion="${s.id}" data-item="${it.id}">
         <option value=""></option>${INFO.escala.map((k) => `<option ${k === it.evaluacion ? "selected" : ""}>${k}</option>`).join("")}</select>
-        <button class="icono" title="Quitar de esta sesión" data-quitar data-sesion="${s.id}" data-item="${it.id}">✕ quitar</button></div></div></li>`).join("")}</ul>`
+        <button class="icono" title="Quitar de esta sesión" data-quitar data-sesion="${s.id}" data-item="${it.id}">✕ quitar</button></div>
+        <div class="obs-item"><textarea rows="1" class="nota" placeholder="Observación rápida (luego se redacta en el informe)" id="obs-${s.id}-${it.id}"
+          data-obs-item data-sesion="${s.id}" data-item="${it.id}">${esc(it.observacion || "")}</textarea>${botonMicro(`obs-${s.id}-${it.id}`)}</div></div></li>`).join("")}</ul>`
       : `<p class="muted" style="font-size:12px">Sin ítems pendientes asignados.</p>`}
     <div class="notas-sesion"><textarea rows="2" placeholder="Notas de la sesión (escríbelas o díctalas rápido; luego se redactan en el informe)" data-notas="${s.id}" id="notas-${s.id}" style="font-size:12px">${esc(s.notas)}</textarea>
       ${botonMicro("notas-" + s.id)}</div>
@@ -919,12 +923,16 @@ async function pintarAsistencia(alumnoId) {
   pintar();
 }
 
+const normArea = (s) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+  .replace(/^\s*area\s+(de\s+)?/, "").trim();
+
 async function pintarNotasInforme(I, esp) {
   const d = await api("GET", `/api/informes/${I.id}/notas`).catch(() => null);
   const caja = $("#tarjeta-notas");
   if (!caja || !d) return;
   const asis = `<div class="asistencia-informe">${htmlAsistencia(d.asistencia)}</div>`;
-  if (!d.notas.length && !d.items.length) {
+  const obs = d.observaciones || [];
+  if (!d.notas.length && !d.items.length && !obs.length) {
     caja.innerHTML = `<h2>📝 Tus notas de la agenda</h2>${asis}<p class="muted">Aún no hay notas ni ítems trabajados en la agenda de este trimestre
       (${fechaCorta(d.desde)} – ${fechaCorta(d.hasta)}). Lo que escribas o dictes en las notas de cada sesión aparecerá aquí para redactar el informe.</p>`;
     return;
@@ -941,7 +949,27 @@ async function pintarNotasInforme(I, esp) {
     <textarea rows="5" id="borrador-notas" style="margin-top:8px">${esc(d.borrador)}</textarea>
     <div class="fila" style="gap:8px;margin-top:8px;flex-wrap:wrap"><label class="muted">Añadir a:</label>
       <select id="destino-notas">${destinos.map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>
-      <button class="primario" id="usar-notas">＋ Añadir al informe</button></div>`;
+      <button class="primario" id="usar-notas">＋ Añadir al informe</button></div>
+    ${obs.length ? `<h3 style="margin:16px 0 4px">Observaciones de los ítems (${obs.length})</h3>
+      <p class="muted">Lo que apuntaste junto a cada ítem en la agenda, redactado para la familia. Al crear o rehacer el borrador
+        ya se incluyen en su área; aquí puedes añadirlas a un informe ya empezado.</p>
+      ${obs.map((o, i) => `<div class="obs-informe" style="border-top:1px solid var(--borde, #ddd);padding-top:8px;margin-top:8px">
+        <p style="margin:0"><strong>${esc(o.area)}</strong> · ${esc(o.texto)} <span class="chip">${esc(o.evaluacion || "sin evaluar")}</span></p>
+        <ul class="lista-notas">${o.notas.map((n) => `<li><strong>${fechaCorta(n.fecha)}</strong> · ${esc(n.texto)}</li>`).join("")}</ul>
+        <textarea rows="3" id="obs-red-${i}">${esc(o.redactada)}</textarea>
+        <div class="fila" style="gap:8px;margin-top:6px;flex-wrap:wrap"><label class="muted">Añadir a:</label>
+          <select id="obs-dest-${i}">${I.areas.map((a) => `<option value="${a.id}" ${normArea(a.area) === normArea(o.area) ? "selected" : ""}>${esc(a.area)}</option>`).join("")}</select>
+          <button class="mini" data-usar-obs="${i}" ${I.areas.length ? "" : "disabled"}>＋ Añadir</button></div></div>`).join("")}` : ""}`;
+  $$("[data-usar-obs]").forEach((b) => b.onclick = () => {
+    const i = b.dataset.usarObs;
+    const ta = $("#campo-area-" + $("#obs-dest-" + i).value);
+    const txt = $("#obs-red-" + i).value.trim();
+    if (!ta || !txt) return;
+    ta.value = (ta.value.trim() ? ta.value.trim() + " " : "") + txt;
+    ta.dispatchEvent(new Event("change"));
+    ta.scrollIntoView({ behavior: "smooth", block: "center" });
+    aviso("Observación añadida al área");
+  });
   $("#usar-notas").onclick = () => {
     const ta = $("#campo-" + $("#destino-notas").value);
     const txt = $("#borrador-notas").value.trim();

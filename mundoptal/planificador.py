@@ -4,6 +4,10 @@ Cada franja del horario de tipo «sesión» tiene uno o varios alumnos. Al
 planificar un rango de fechas, para cada alumno y franja se crea una sesión y
 se le asignan los ítems pendientes (no «C») de su ACI vigente:
 
+  0. Semana variada: primero un ítem de cada área que el alumno aún no tiene esa
+     semana (las que hace más tiempo que no se trabajan, antes). Con una sola sesión
+     semanal, las áreas rotan de una semana a la siguiente. Música e Inglés no se
+     programan (las imparten otros especialistas).
   1. Primero los ítems que menos veces se han programado (rotación).
   2. Después los que hace más tiempo que no se trabajan.
   3. Después los de menor nivel de logro (NI antes que I, ED, ED+).
@@ -15,11 +19,20 @@ especialidad (o sin especialidad marcada).
 from __future__ import annotations
 
 import datetime as dt
+import unicodedata
 
 from .config import ESCALA
 from .store import Store, StoreError, evaluacion_actual
 
 RANGO_LOGRO = {"": 0, "NI": 0, "I": 1, "ED": 2, "ED+": 3, "C": 4}
+
+# Áreas que no se programan en las sesiones de PT/AL (las imparten otros especialistas)
+AREAS_EXCLUIDAS = ("musica", "ingles", "lengua extranjera")
+
+
+def area_excluida(nombre: str) -> bool:
+    n = "".join(c for c in unicodedata.normalize("NFD", nombre or "") if unicodedata.category(c) != "Mn").lower()
+    return any(x in n for x in AREAS_EXCLUIDAS)
 
 
 def _fecha(s: str | dt.date) -> dt.date:
@@ -114,7 +127,7 @@ class Planificador:
             params.append(especialidad)
         filas = self.s.q(
             f"""SELECT i.*, c.nombre AS competencia, c.id AS comp_id, s.nombre AS subarea,
-                       a.nombre AS area, a.especialidad,
+                       a.nombre AS area, a.id AS area_id, a.especialidad,
                        (SELECT COUNT(*) FROM sesion_items si JOIN sesiones se ON se.id = si.sesion_id
                          WHERE si.item_id = i.id AND se.estado != 'cancelada') AS veces,
                        (SELECT MAX(se.fecha) FROM sesion_items si JOIN sesiones se ON se.id = si.sesion_id
@@ -129,23 +142,45 @@ class Planificador:
         for pos, f in enumerate(filas):
             f["evaluacion"] = evaluacion_actual(f, aci["trimestre"])
             f["posicion"] = pos
-            if f["evaluacion"] != "C" and f["texto"].strip():
+            if f["evaluacion"] != "C" and f["texto"].strip() and not area_excluida(f["area"]):
                 pendientes.append(f)
         return pendientes
 
     @staticmethod
-    def elegir(pendientes: list[dict], n: int) -> list[dict]:
+    def elegir(pendientes: list[dict], n: int, areas_semana: set | None = None) -> list[dict]:
+        """Elige n ítems. Primero uno de cada área que aún no se ha trabajado esa semana
+        (empezando por las que hace más tiempo que no se trabajan), para que la semana sea
+        variada; después, la rotación habitual por competencias."""
         orden = sorted(
             pendientes,
             key=lambda f: (f["veces"], f["ultima"] or "", RANGO_LOGRO.get(f["evaluacion"], 0), f["posicion"]),
         )
         elegidos: list[dict] = []
         comps_usadas: set[int] = set()
-        # Primera pasada: una por competencia
+        areas_semana = set(areas_semana or ())
+        area_de = lambda f: f.get("area_id", f.get("area"))  # noqa: E731
+        por_area: dict = {}
+        for f in orden:
+            por_area.setdefault(area_de(f), []).append(f)
+        if len(por_area) > 1:
+            if set(por_area) <= areas_semana:
+                areas_semana = set()  # ya han salido todas esta semana: se empieza otra vuelta
+
+            def antiguedad(area):
+                fs = por_area[area]
+                return (max((f["ultima"] or "") for f in fs), sum(f["veces"] for f in fs) / len(fs),
+                        min(f["posicion"] for f in fs))
+            for area in sorted((a for a in por_area if a not in areas_semana), key=antiguedad):
+                if len(elegidos) >= n:
+                    break
+                f = por_area[area][0]
+                elegidos.append(f)
+                comps_usadas.add(f["comp_id"])
+        # Una por competencia
         for f in orden:
             if len(elegidos) >= n:
                 break
-            if f["comp_id"] not in comps_usadas:
+            if f["comp_id"] not in comps_usadas and f not in elegidos:
                 elegidos.append(f)
                 comps_usadas.add(f["comp_id"])
         for f in orden:
@@ -189,9 +224,25 @@ class Planificador:
             if existente["estado"] != "planificada" or not replanificar:
                 return
             with self.s.tx() as c:
-                c.execute("DELETE FROM sesion_items WHERE sesion_id = ?", (existente["id"],))
+                # Se conservan los ítems ya trabajados o con observación de la maestra
+                c.execute("DELETE FROM sesion_items WHERE sesion_id = ? AND trabajado = 0 AND observacion = ''",
+                          (existente["id"],))
         pendientes = self.items_pendientes(alumno["id"], franja["especialidad"])
-        elegidos = self.elegir(pendientes, franja["items_por_sesion"])
+        # Áreas que el alumno ya tiene en otras sesiones de esa misma semana
+        lunes = lunes_de(fecha)
+        ya = self.s.q(
+            """SELECT DISTINCT a.id FROM sesion_items si JOIN sesiones se ON se.id = si.sesion_id
+               JOIN items i ON i.id = si.item_id JOIN competencias c ON c.id = i.competencia_id
+               JOIN subareas s ON s.id = c.subarea_id JOIN areas a ON a.id = s.area_id
+               WHERE se.alumno_id = ? AND se.fecha BETWEEN ? AND ? AND se.estado != 'cancelada'
+                 AND NOT (se.franja_id = ? AND se.fecha = ?)""",
+            (alumno["id"], lunes.isoformat(), (lunes + dt.timedelta(days=4)).isoformat(), franja["id"], fecha))
+        elegidos = self.elegir(pendientes, franja["items_por_sesion"], {r["id"] for r in ya})
+        # Si la sesión conserva ítems (trabajados o con observación), se completan hasta n
+        if existente:
+            quedan = {r["item_id"] for r in self.s.q("SELECT item_id FROM sesion_items WHERE sesion_id = ?",
+                                                     (existente["id"],))}
+            elegidos = [e for e in elegidos if e["id"] not in quedan][:max(0, franja["items_por_sesion"] - len(quedan))]
         if not elegidos:
             res["sin_pendientes"].append(alumno["nombre"])
         with self.s.tx() as c:
@@ -227,7 +278,7 @@ class Planificador:
         ids = [s["id"] for s in sesiones]
         marcas = ",".join("?" * len(ids))
         items = self.s.q(
-            f"""SELECT si.sesion_id, si.trabajado, i.id, i.texto, i.eval_1t, i.eval_2t, i.eval_3t,
+            f"""SELECT si.sesion_id, si.trabajado, si.observacion, i.id, i.texto, i.eval_1t, i.eval_2t, i.eval_3t,
                        c.nombre AS competencia, s.nombre AS subarea, a.nombre AS area, acis.trimestre
                 FROM sesion_items si JOIN items i ON i.id = si.item_id
                 JOIN competencias c ON c.id = i.competencia_id JOIN subareas s ON s.id = c.subarea_id
@@ -258,8 +309,11 @@ class Planificador:
                 c.execute("UPDATE sesiones SET notas = ? WHERE id = ?", (datos["notas"], sesion_id))
 
     def marcar_item(self, sesion_id: int, item_id: int, trabajado: bool | None = None,
-                    evaluacion: str | None = None) -> None:
+                    evaluacion: str | None = None, observacion: str | None = None) -> None:
         with self.s.tx() as c:
+            if observacion is not None:
+                c.execute("UPDATE sesion_items SET observacion = ? WHERE sesion_id = ? AND item_id = ?",
+                          (str(observacion).strip(), sesion_id, item_id))
             if trabajado is not None:
                 c.execute("UPDATE sesion_items SET trabajado = ? WHERE sesion_id = ? AND item_id = ?",
                           (int(bool(trabajado)), sesion_id, item_id))

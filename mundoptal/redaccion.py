@@ -211,3 +211,70 @@ def unir(partes: list[str]) -> str:
         return "".join(partes)
     conj = "e" if re.match(r"^h?i(?![aeou])", _sin_tilde(partes[-1][:3].lower())) else "y"
     return ", ".join(partes[:-1]) + f" {conj} " + partes[-1]
+
+
+# ================================================== observaciones rápidas de la agenda
+# Expresiones coloquiales → lenguaje profesional, real y amable (se aplican en orden)
+SUAVIZAR = [
+    (r"\bno (le )?da (ni )?una\b", "le está costando"),
+    (r"\bpasa (de todo|de la actividad|de mí|de mi)\b", "le cuesta implicarse en la actividad"),
+    (r"\bno (quiere )?hac(e|ía) nada\b", "le ha costado implicarse en la actividad"),
+    (r"\bno quer[ií]a\b|\bno quiere\b", "muestra poca disposición a"),
+    (r"\bse (porta|portaba|ha portado) (muy )?mal\b|\bmal comportamiento\b", "le ha costado regular su conducta"),
+    (r"\b(una |la )?(rabieta|pataleta)\b", "un momento de desregulación emocional"),
+    (r"\b(rabietas|pataletas)\b", "momentos de desregulación emocional"),
+    (r"\bno para(ba)?( quiet[oa])?\b|\b(está|estaba|muy) movid[oa]\b",
+     "le cuesta permanecer sentado y en calma"),
+    (r"\b(está|estaba|ha estado|muy|bastante)?\s*(despistad[oa]|empanad[oa]|en las nubes|dispers[oa])\b",
+     "le ha costado mantener la atención"),
+    (r"\b(es|está|estaba|muy)?\s*(cabez[oó]n(a)?|tozud[oa]|terc[oa])\b", "le ha costado ser flexible"),
+    (r"\b(es|está|estaba|muy)?\s*(vag[oa]|perezos[oa])\b", "ha mostrado poca motivación"),
+    (r"\bno se entera(ba)?\b", "le cuesta comprender lo que se le pide"),
+    (r"\bno hace caso\b|\bpasa de las normas\b", "le cuesta seguir las indicaciones"),
+    (r"\bpega(ba)? a (sus |los )?compañeros\b", "le ha costado regular su conducta con sus compañeros"),
+    (r"\bgrita(ba)?\b", "ha elevado el tono de voz"),
+    # Referencias a días concretos no tienen sentido en un informe trimestral
+    (r"\bque (el|la) (lunes|martes|mi[eé]rcoles|jueves|viernes|semana pasada|otra semana|otro d[ií]a|sesi[oó]n anterior)\b"
+     r"|\bque ayer\b", "que en sesiones anteriores"),
+    (r"\bfatal\b", "con mucha dificultad"),
+    (r"\bmal\b", "con dificultad"),
+]
+# Lo que suena a «conseguido» se rebaja si el ítem no está evaluado con C
+LOGROS = [
+    (r"\b(ya )?(lo )?(ha conseguido|consigue|lo logra|ha logrado|domina|lo domina)\b",
+     "empieza a hacerlo en algunos momentos"),
+    (r"\b(ya )?lo hace (sol[oa]|sin ayuda|perfecto|perfectamente|genial|muy bien)\b",
+     "lo ha hecho bien en algunos momentos"),
+    (r"\bperfect(o|amente)\b|\bgenial\b", "bien"),
+]
+# Notas que son solo una valoración, sin frase
+SOLO_POSITIVA = re.compile(r"^(muy |s[uú]per |super )?(bien|genial|estupendo|perfecto|fenomenal|ok|vale|s[ií]|"
+                           r"lo hace|bien hecho)[.!]*$", re.I)
+SOLO_NEGATIVA = re.compile(r"^(muy |bastante )?(mal|fatal|nada|no|no lo hace|le cuesta( mucho)?|regular)[.!]*$", re.I)
+DIFICULTAD = re.compile(r"\b(cuesta|cuestan|costado|apoyo|ayuda|todav[ií]a|a[uú]n|dificultad|no )", re.I)
+
+
+def suavizar(texto: str, conseguido: bool) -> str:
+    t = re.sub(r"[!¡]+", "", texto)
+    t = re.sub(r"[\U0001F300-\U0001FAFF☀-➿]", "", t)
+    for patron, cambio in SUAVIZAR:
+        t = re.sub(patron, cambio, t, flags=re.I)
+    if not conseguido:
+        for patron, cambio in LOGROS:
+            t = re.sub(patron, cambio, t, flags=re.I)
+    return re.sub(r"\s+", " ", t).strip(" ,")
+
+
+def clausula(nota: str, conseguido: bool, nombre: str = "") -> str:
+    """Nota ya pulida → cláusula que sigue a «hemos observado que…»."""
+    t = nota.strip().rstrip(".")
+    if SOLO_POSITIVA.match(t):
+        return "ha respondido muy bien" if conseguido else "ha respondido de forma positiva"
+    if SOLO_NEGATIVA.match(t):
+        return "todavía le cuesta y necesita el apoyo del adulto" if not t.lower().startswith("regular") \
+            else "lo ha realizado con algo de dificultad"
+    t = suavizar(t, conseguido)
+    primera = t.split(" ")[0] if t else ""
+    if t and not (nombre and primera.lower() == nombre.lower()) and not t[1:2].isupper():
+        t = t[0].lower() + t[1:]
+    return t

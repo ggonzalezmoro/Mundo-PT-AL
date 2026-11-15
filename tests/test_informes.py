@@ -141,6 +141,56 @@ def test_borrador_desde_notas_de_la_agenda(tmp_path):
     assert c.get(f"/api/informes/{inf2}/notas", headers=h).get_json()["notas"] == []
 
 
+def test_observaciones_de_items_en_el_informe(tmp_path):
+    app = crear_app(tmp_path / "o.db")
+    c = app.test_client()
+    uid = c.post("/api/usuarios", json={"nombre": "Maestra", "especialidad": "AL"}).get_json()["id"]
+    h = {"X-Usuario": str(uid)}
+    al = c.post("/api/alumnos", json={"nombre": "Alumna Prueba", "curso": "4 años"}, headers=h).get_json()["id"]
+    _aci_con_items(c, al, h)
+    c.post("/api/franjas", json={"dia": 0, "inicio": "09:00", "fin": "09:30", "alumnos": [al], "items_por_sesion": 3},
+           headers=h)
+    c.post("/api/planificar", json={"desde": "2026-10-05", "hasta": "2026-10-16"}, headers=h)
+    ses = c.get("/api/agenda?desde=2026-10-05&hasta=2026-10-16", headers=h).get_json()["sesiones"]
+    señala = next(it for it in ses[0]["items"] if it["texto"] == "Señala lo que quiere")
+    url = lambda s: f"/api/sesiones/{s['id']}/items/{señala['id']}"
+    assert c.patch(url(ses[0]), json={"observacion": "hoy no para quieto, ya lo hace solo!!"}, headers=h).status_code == 200
+    c.patch(url(ses[1]), json={"observacion": "mejor q la semana pasada, señala el agua"}, headers=h)
+    ag = c.get("/api/agenda?desde=2026-10-05&hasta=2026-10-16", headers=h).get_json()["sesiones"]
+    assert next(it for it in ag[0]["items"] if it["id"] == señala["id"])["observacion"].startswith("hoy no para")
+    # Replanificar no borra los ítems con observación
+    c.post("/api/planificar", json={"desde": "2026-10-05", "hasta": "2026-10-16", "replanificar": True}, headers=h)
+    ag = c.get("/api/agenda?desde=2026-10-05&hasta=2026-10-16", headers=h).get_json()["sesiones"]
+    assert any(it["id"] == señala["id"] and it["observacion"] for it in ag[0]["items"])
+
+    inf = c.post(f"/api/alumnos/{al}/informes", json={"trimestre": 1, "curso_escolar": "2026/27"}, headers=h).get_json()["id"]
+    texto = c.get(f"/api/informes/{inf}", headers=h).get_json()["areas"][0]["texto"]
+    assert "En las actividades para señalar lo que quiere, al principio del trimestre observamos que" in texto
+    assert "le cuesta permanecer sentado y en calma" in texto and "no para quieto" not in texto
+    # El ítem está en ED: nada suena a conseguido
+    assert "ya lo hace solo" not in texto and "lo ha hecho bien en algunos momentos" in texto
+    assert "En las últimas sesiones, mejor que en sesiones anteriores, señala el agua." in texto
+    assert "seguiremos trabajándolo" in texto or "continuaremos reforzándolo" in texto
+    assert "hoy" not in texto.lower()
+    d = c.get(f"/api/informes/{inf}/notas", headers=h).get_json()
+    assert len(d["observaciones"]) == 1
+    o = d["observaciones"][0]
+    assert o["area"] == "Comunicación y representación" and o["evaluacion"] == "ED" and len(o["notas"]) == 2
+    assert o["redactada"] in texto
+
+
+def test_redactar_observacion_reglas():
+    base = {"texto": "Nombra colores básicos", "notas": [{"texto": "muy bien"}]}
+    assert informes.redactar_observacion({**base, "evaluacion": "C"}) == \
+        "En las actividades para nombrar colores básicos, hemos observado que ha respondido muy bien."
+    en_proceso = informes.redactar_observacion({**base, "evaluacion": "I"})
+    assert "ha respondido de forma positiva" in en_proceso and "en proceso" in en_proceso
+    # Duplicados fuera y lenguaje amable
+    r = informes.redactar_observacion({"texto": "Imita gestos", "evaluacion": "NI",
+                                       "notas": [{"texto": "pasa de todo"}, {"texto": "pasa de todo"}]})
+    assert r.count("le cuesta implicarse en la actividad") == 1 and "pasa de" not in r
+
+
 def test_pulir_nota():
     assert informes.pulir_nota("  he trabajado la atencion  , tb pinchitos ") == "Hemos trabajado la atencion, también pinchitos."
     assert informes.pulir_nota("") == ""

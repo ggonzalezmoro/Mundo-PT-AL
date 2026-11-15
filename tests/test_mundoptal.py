@@ -144,6 +144,48 @@ def test_planificacion_rota_items_y_salta_conseguidos(store):
     assert plan.planificar(lunes.isoformat(), (lunes + dt.timedelta(days=13)).isoformat())["sesiones"] == 0
 
 
+def _aci_varias_areas(store):
+    al = store.crear_alumno("Alumna Prueba", "4 años")
+    aci = store.crear_aci(al, {"trimestre": 1})
+    texto = ""
+    for area in ("Comunicación", "Crecimiento en armonía", "Descubrimiento del entorno", "Música",
+                 "Lengua extranjera; Inglés", "Funciones ejecutivas"):
+        texto += f"Área {area}. Competencia general. " + " ".join(f"Ítem objetivo {area} {i}." for i in range(4)) + " "
+    store.fusionar_dictado(aci, dictado.analizar(texto)["areas"])
+    return al, aci
+
+
+def test_planificacion_semanal_variada_sin_musica_ni_ingles(store):
+    plan = Planificador(store)
+    al, _ = _aci_varias_areas(store)
+    plan.guardar_franja({"dia": 0, "inicio": "09:00", "fin": "09:45", "items_por_sesion": 2, "alumnos": [al]})
+    plan.guardar_franja({"dia": 3, "inicio": "10:00", "fin": "10:45", "items_por_sesion": 2, "alumnos": [al]})
+    lunes = lunes_de(dt.date(2026, 11, 9))
+    plan.planificar(lunes.isoformat(), (lunes + dt.timedelta(days=13)).isoformat())
+    for semana in range(2):
+        ini = lunes + dt.timedelta(days=7 * semana)
+        ag = plan.agenda(ini.isoformat(), (ini + dt.timedelta(days=4)).isoformat())
+        areas = {it["area"] for s in ag for it in s["items"]}
+        assert not {a for a in areas if "Música" in a or "Inglés" in a}
+        # 4 huecos en la semana y 4 áreas de trabajo: salen todas
+        assert areas == {"Comunicación", "Crecimiento en armonía", "Descubrimiento del entorno", "Funciones ejecutivas"}, areas
+
+
+def test_una_sesion_semanal_rota_las_areas_entre_semanas(store):
+    plan = Planificador(store)
+    al, _ = _aci_varias_areas(store)
+    plan.guardar_franja({"dia": 1, "inicio": "09:00", "fin": "09:30", "items_por_sesion": 1, "alumnos": [al]})
+    lunes = lunes_de(dt.date(2026, 11, 9))
+    plan.planificar(lunes.isoformat(), (lunes + dt.timedelta(days=27)).isoformat())
+    ag = plan.agenda(lunes.isoformat(), (lunes + dt.timedelta(days=27)).isoformat())
+    assert len(ag) == 4
+    assert len({s["items"][0]["area"] for s in ag}) == 4  # cuatro semanas, cuatro áreas distintas
+    # Replanificar rehace las planificadas y mantiene la variedad
+    plan.planificar(lunes.isoformat(), (lunes + dt.timedelta(days=27)).isoformat(), replanificar=True)
+    ag = plan.agenda(lunes.isoformat(), (lunes + dt.timedelta(days=27)).isoformat())
+    assert all(len(s["items"]) == 1 for s in ag)
+
+
 def test_evaluar_desde_agenda_y_especialidad(store):
     plan = Planificador(store)
     al, aci = _aci_con_items(store, n_items=1)

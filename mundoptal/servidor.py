@@ -326,7 +326,7 @@ def crear_app(db_path: str | Path) -> Flask:
     @app.patch("/api/sesiones/<int:sesion_id>/items/<int:item_id>")
     def marcar_item(sesion_id, item_id):
         d = cuerpo()
-        plan.marcar_item(sesion_id, item_id, d.get("trabajado"), d.get("evaluacion"))
+        plan.marcar_item(sesion_id, item_id, d.get("trabajado"), d.get("evaluacion"), d.get("observacion"))
         return jsonify(ok=True)
 
     @app.delete("/api/sesiones/<int:sesion_id>/items/<int:item_id>")
