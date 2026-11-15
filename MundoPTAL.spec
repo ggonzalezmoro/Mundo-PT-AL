@@ -12,10 +12,12 @@ hiddenimports = []
 if Path("models").exists():
     datas.append(("models", "models"))
 
+# mcp: servidor para Claude Desktop (MundoPTAL.exe --mcp, por stdio, con el mismo exe sin ventana);
 # pptx: plantillas internas; anthropic/keyring: «Crear material con Claude» (keyring busca su
 # almacén por metadatos, así que se copian también los de win32ctypes)
 for paquete in ("vosk", "_sounddevice_data", "webview", "docx", "openpyxl", "pptx", "anthropic", "keyring",
-                "win32ctypes", "jaraco", "icalendar", "recurring_ical_events", "x_wr_timezone", "tzdata"):
+                "win32ctypes", "jaraco", "icalendar", "recurring_ical_events", "x_wr_timezone", "tzdata",
+                "mcp", "pydantic_settings", "sse_starlette", "httpx_sse"):
     try:
         d, b, h = collect_all(paquete)
         datas += d
@@ -29,7 +31,8 @@ a = Analysis(
     pathex=["."],
     binaries=binaries,
     datas=datas,
-    hiddenimports=hiddenimports + ["sounddevice", "keyring.backends.Windows", "win32ctypes.pywin32.win32cred"],
+    hiddenimports=hiddenimports + ["sounddevice", "keyring.backends.Windows", "win32ctypes.pywin32.win32cred",
+                                   "mundoptal.mcp_server", "mcp.server.fastmcp", "mcp.server.stdio"],
     excludes=["tkinter", "pytest"],
 )
 pyz = PYZ(a.pure)

@@ -1809,6 +1809,40 @@ async function pintarAjustesCalendario() {
   };
 }
 
+// Servidor MCP local: Claude Desktop (con la suscripción Pro) crea material sin clave de la API
+async function pintarAjustesClaudeDesktop() {
+  const caja = $("#ajustes-claude-desktop");
+  const e = await api("GET", "/api/claude-desktop").catch(() => null);
+  if (!e || !caja.isConnected) return;
+  caja.innerHTML = `<h2>Usar con Claude Desktop</h2>
+    <p class="muted" style="margin-top:0">Con la aplicación Claude Desktop y tu suscripción (Pro), puedes pedirle a Claude material
+      («Hazme 6 fichas de vocales con animales para 4 años en Word») y lo crea con el estilo del colegio en tu carpeta de material, sin clave de la API.</p>
+    <p>${e.configurado ? (e.al_dia ? "✅ Claude Desktop ya está configurado." : "⚠️ Claude Desktop está configurado con otra ruta: pulsa el botón para actualizarla.")
+      : e.carpeta_claude ? "Claude Desktop está instalado pero aún no conoce Mundo PT-AL." : "No encuentro Claude Desktop en este ordenador. Instálalo desde claude.ai/download e inicia sesión."}</p>
+    <p><button class="primario" id="cd-configurar">⚙ Configurar Claude Desktop</button>
+      <button id="cd-copiar">📋 Copiar configuración</button></p>
+    <ol class="muted" style="margin:6px 0">
+      <li>Instala Claude Desktop e inicia sesión con tu cuenta Pro.</li>
+      <li>Pulsa «Configurar Claude Desktop» (se guarda antes una copia de su configuración).</li>
+      <li>Cierra Claude Desktop del todo (también desde el icono junto al reloj) y vuelve a abrirlo.</li>
+      <li>Pídele el material. La primera vez te preguntará si permite usar «mundo-ptal».</li></ol>
+    <label style="font-weight:400"><input type="checkbox" id="cd-alumnos" ${e.alumnos ? "checked" : ""} style="width:auto;display:inline;margin:0 4px 0 0;vertical-align:middle">
+      Dejar que Claude vea los objetivos pendientes de las ACIs (solo como «Alumno 1», «Alumno 2»…, nunca nombres)</label>
+    <details style="margin-top:10px"><summary>Configurarlo a mano</summary>
+      <p class="muted">Añade esto dentro de <code>${esc(e.ruta)}</code> (si ya hay un bloque <code>mcpServers</code>, añade solo la entrada «mundo-ptal»):</p>
+      <pre class="codigo" id="cd-json">${esc(e.fragmento)}</pre></details>`;
+  $("#cd-configurar").onclick = () => intentar(async () => {
+    const r = await api("POST", "/api/claude-desktop/configurar");
+    aviso("Listo. Reinicia Claude Desktop" + (r.copia ? " (copia de su configuración: " + r.copia + ")" : ""));
+    pintarAjustesClaudeDesktop();
+  });
+  $("#cd-copiar").onclick = () => intentar(async () => {
+    await navigator.clipboard.writeText(e.fragmento);
+    aviso("Configuración copiada");
+  });
+  $("#cd-alumnos").onchange = (ev) => intentar(() => api("POST", "/api/claude-desktop/ajustes", { alumnos: ev.target.checked }));
+}
+
 async function vistaAjustes() {
   const voz = await api("GET", "/api/voz");
   vista.innerHTML = `
@@ -1834,9 +1868,11 @@ async function vistaAjustes() {
         : `<p>⚠️ ${esc(voz.motivo)}</p><p class="muted">Mientras tanto puedes usar el dictado de Windows: haz clic en el cuadro de texto y pulsa <strong>Windows + H</strong>.</p>`}
     </div>
     <div class="tarjeta" id="ajustes-calendario"><h2>Google Calendar</h2><p class="muted">Cargando…</p></div>
-    <div class="tarjeta" id="ajustes-material"><h2>Crear material</h2><p class="muted">Cargando…</p></div>`;
+    <div class="tarjeta" id="ajustes-material"><h2>Crear material</h2><p class="muted">Cargando…</p></div>
+    <div class="tarjeta" id="ajustes-claude-desktop"><h2>Usar con Claude Desktop</h2><p class="muted">Cargando…</p></div>`;
   pintarAjustesMaterial();
   pintarAjustesCalendario();
+  pintarAjustesClaudeDesktop();
   $("#copia").onclick = () => intentar(async () => { const r = await api("POST", "/api/copia-seguridad"); aviso("Copia guardada en " + r.ruta); });
   $("#buscar-act").onclick = () => buscarActualizacion(true);
   if (ACTUALIZACION) pintarActualizacion(ACTUALIZACION);

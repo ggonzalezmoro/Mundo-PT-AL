@@ -450,3 +450,7 @@ details.tarjeta.avanzadas:not([open]) { padding-top: 10px; padding-bottom: 10px;
 .lista-calendarios select { width: auto; flex: 0 0 auto; }
 .lista-calendarios input[type=checkbox] { width: 18px; height: 18px; flex: 0 0 auto; margin: 0; }
 .sem-cab .evento-ext { width: 100%; }
+
+/* Ajustes › Usar con Claude Desktop */
+pre.codigo { background: #f4f6f3; border: 1px solid var(--borde); border-radius: 6px; padding: 10px; font-size: 12px;
+  overflow-x: auto; white-space: pre; max-width: 100%; }

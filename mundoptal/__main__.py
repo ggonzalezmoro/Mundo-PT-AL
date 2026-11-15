@@ -100,6 +100,9 @@ def _quitar_marca_de_internet() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if "--mcp" in argv:  # servidor MCP para Claude Desktop: por stdio, sin ventana ni puerto
+        from . import mcp_server
+        return mcp_server.main([a for a in argv if a != "--mcp"])
     _configurar_log()
     if _valor(argv, "--perfil"):
         return configurar_desde_consola(argv)

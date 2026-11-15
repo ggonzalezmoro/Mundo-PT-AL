@@ -21,6 +21,7 @@ Internet y los datos de los alumnos nunca salen del equipo.
 | **Informes a familias** | Informe descriptivo trimestral por alumno con el formato de «Observaciones y comentarios» de las ACIs: cómo se ha mostrado, actitud en las sesiones de PT y de AL, evolución en cada área (con un borrador hecho a partir de las evaluaciones de la ACI), cierre, despedida y firmas. Se exporta a Word y se incluye también al final de la ACI de ese trimestre. |
 | **Actualizaciones** | En *Ajustes › Actualizaciones* se comprueba si hay una versión nueva publicada en GitHub y se instala con un botón: el programa se cierra, se sustituye y se vuelve a abrir. Los datos no se tocan (antes se hace una copia de seguridad). Al abrir, avisa si hay versión nueva. |
 | **Google Calendar (solo lectura)** | *Ajustes › Google Calendar*: se pega el enlace «Insertar», el ID del calendario o la dirección iCal (pública o secreta) y sus eventos aparecen en *Mi trabajo* y en la agenda del día, con una leyenda para mostrar u ocultar cada calendario. Nada de lo que se crea en la aplicación va a Google. Las direcciones públicas viajan al exportar los datos; las secretas se guardan en el Administrador de credenciales de Windows y hay que pegarlas de nuevo en otro ordenador. |
+| **Usar con Claude Desktop** | Con Claude Desktop y una suscripción Pro (sin clave de la API), se le pide el material a Claude en lenguaje natural y Mundo PT-AL lo maqueta y lo guarda en la carpeta de material. Ver más abajo. |
 | **Pasar datos a otro ordenador** | *Ajustes › Exportar mis datos* guarda un archivo `.db` en Documentos › Mundo PT-AL; en el otro ordenador, *Importar datos* lo carga (sustituye los datos de ese ordenador). No hay sincronización. |
 
 ## Uso diario
@@ -63,6 +64,32 @@ Di la palabra clave y después el texto. Para separar ítems di «punto» o vuel
 
 Antes de añadir nada, la aplicación muestra cómo lo ha entendido. Si un área,
 subárea o competencia ya existe con el mismo nombre, lo dictado se añade dentro.
+
+## Crear material con Claude Desktop (sin clave de la API)
+
+Mundo PT-AL incluye un pequeño servidor MCP local: Claude Desktop lo arranca y le pide
+que maquete el material que diseña. Funciona con la suscripción Pro de Claude; no hace
+falta ninguna clave de la API ni saldo.
+
+1. Instala **Claude Desktop** (claude.ai/download) e inicia sesión con la cuenta Pro.
+2. En Mundo PT-AL, *Ajustes › Usar con Claude Desktop* › **Configurar Claude Desktop**.
+   Añade la entrada `mundo-ptal` a `%APPDATA%\Claude\claude_desktop_config.json`
+   (antes guarda una copia del archivo y no borra las demás entradas). También está
+   «Copiar configuración» para hacerlo a mano.
+3. **Cierra Claude Desktop del todo** (también desde el icono junto al reloj) y ábrelo.
+4. Pídele, por ejemplo: *«Hazme 6 fichas de vocales con animales para 4 años en Word»*.
+   La primera vez pregunta si permites usar las herramientas de «mundo-ptal».
+   El archivo aparece en Documentos › Mundo PT-AL › Material y en *Crear material*.
+
+Herramientas: `listar_plantillas`, `esquema_material`, `crear_material`,
+`crear_desde_plantilla`, `listar_materiales` y, solo si se activa en Ajustes (viene
+desactivado), `listar_alumnos` y `objetivos_alumno`, que dan un alias («Alumno 1»…) y
+los objetivos pendientes de la ACI, nunca nombres. Se usa el perfil con el que se
+trabajó por última vez en la aplicación (o `--perfil <id o nombre>`). La base de datos
+se abre en solo lectura; solo se registra el material creado.
+
+Arranque a mano: `MundoPTAL.exe --mcp` o, desde el código, `python -m mundoptal.mcp_server`.
+Si se cambia la aplicación de carpeta, hay que volver a pulsar «Configurar Claude Desktop».
 
 ## Para desarrolladores
 

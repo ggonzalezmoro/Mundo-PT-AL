@@ -11,3 +11,5 @@ keyring==25.7.0
 icalendar==7.3.0
 recurring-ical-events==3.8.2
 tzdata==2026.6
+# Servidor MCP local para Claude Desktop (MundoPTAL.exe --mcp). <2: la v2 del SDK cambia la API
+mcp==1.30.0

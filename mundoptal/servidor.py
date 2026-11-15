@@ -10,7 +10,8 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import actualizador, calendario, db as basedatos, dictado, horario, ia_material, informes, maqueta, material, trabajo
+from . import (actualizador, biblioteca, calendario, claude_desktop, db as basedatos, dictado, horario, ia_material, informes,
+               maqueta, material, mcp_server, trabajo)
 from .config import APP_NAME, APP_VERSION, COLEGIO, DIAS, ESCALA, ESCALA_TEXTO, data_dir, static_dir
 from .planificador import Planificador, lunes_de
 from .store import Store, StoreError
@@ -29,11 +30,24 @@ def crear_app(db_path: str | Path) -> Flask:
     def cuerpo() -> dict:
         return request.get_json(silent=True) or {}
 
+    ultimo = {"perfil": None}
+
+    def recordar_perfil(uid: int) -> None:
+        """Último perfil usado (lo usa el servidor MCP de Claude Desktop si no se le indica otro).
+        Solo se escribe cuando cambia."""
+        if ultimo["perfil"] == uid:
+            return
+        ultimo["perfil"] = uid
+        with store.tx() as c:
+            c.execute("INSERT INTO meta(clave, valor) VALUES ('ultimo_perfil', ?) "
+                      "ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor", (str(uid),))
+
     def usuario_actual() -> int | None:
         """Perfil activo, enviado por la interfaz en la cabecera X-Usuario.
         Si todavía no hay perfiles, se trabaja sin filtrar (compatibilidad)."""
         valor = request.headers.get("X-Usuario", "")
         if valor.isdigit() and store.obtener_usuario(int(valor)):
+            recordar_perfil(int(valor))
             return int(valor)
         usuarios = store.listar_usuarios()
         if not usuarios:
@@ -195,13 +209,8 @@ def crear_app(db_path: str | Path) -> Flask:
             store.conn.execute("INSERT INTO meta(clave, valor) VALUES (?, ?) ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor",
                                (clave, valor))
 
-    def carpeta_material() -> Path:
-        d = carpeta_documentos() / "Material"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    def logo_perfil(uid) -> Path:
-        return carpeta_material() / f"logo_fichas_{uid or 0}.png"
+    carpeta_material = biblioteca.carpeta_material
+    logo_perfil = biblioteca.logo_perfil
 
     def cabecera_perfil(uid) -> str:
         u = store.obtener_usuario(uid) if uid else None
@@ -259,19 +268,12 @@ def crear_app(db_path: str | Path) -> Flask:
         rec = maqueta.Recursos(carpeta_pictos=carpeta_documentos() / "Pictogramas" if pictos_activados() else None,
                                descargar_pictos=pictos_activados(), logo=logo if logo.exists() else None,
                                cabecera=cabecera_perfil(uid), alumno=(alumno or {}).get("nombre", "") if formato == "docx" else "")
-        datos = maqueta.a_word(spec, rec) if formato == "docx" else maqueta.a_powerpoint(spec, rec)
-        base = re.sub(r"[^\w\-]+", "_", f"{dt.date.today():%Y-%m-%d}_{spec.titulo}").strip("_")[:80] or "material"
-        ruta = carpeta_material() / f"{base}.{formato}"
-        n = 2
-        while ruta.exists():
-            ruta = carpeta_material() / f"{base}_{n}.{formato}"
-            n += 1
+        datos = biblioteca.maquetar(spec, formato, rec)
+        ruta = biblioteca.nombre_archivo(spec.titulo, formato)
         ruta.write_bytes(datos)
         with store.tx() as c:
-            mid = c.execute("""INSERT INTO materiales(usuario_id, alumno_id, titulo, tipo, origen, formato, paginas, ruta)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (uid, d.get("alumno_id") or None, spec.titulo, d.get("tipo", ""), d.get("origen") or "plantilla",
-                             formato, len(spec.paginas), str(ruta))).lastrowid
+            mid = biblioteca.registrar(c, uid, spec, formato, ruta, d.get("tipo", ""), d.get("origen") or "plantilla",
+                                       d.get("alumno_id"))
         if d.get("abrir"):
             abrir_archivo(ruta)
         return jsonify(id=mid, ruta=str(ruta), nombre=ruta.name)
@@ -335,6 +337,22 @@ def crear_app(db_path: str | Path) -> Flask:
             poner_ajuste("material.pictos", "1" if d["pictos"] else "0")
         if "cabecera" in d:
             poner_ajuste(f"material.cabecera.{uid or 0}", str(d["cabecera"] or "").strip()[:80])
+        return jsonify(ok=True)
+
+    # ------------------------------------------------------------ usar con Claude Desktop (servidor MCP local)
+    @app.get("/api/claude-desktop")
+    def claude_desktop_estado():
+        return jsonify(**claude_desktop.estado(), alumnos=ajuste(mcp_server.AJUSTE_ALUMNOS, "0") == "1")
+
+    @app.post("/api/claude-desktop/configurar")
+    def claude_desktop_configurar():
+        return jsonify(claude_desktop.configurar())
+
+    @app.post("/api/claude-desktop/ajustes")
+    def claude_desktop_ajustes():
+        d = cuerpo()
+        if "alumnos" in d:
+            poner_ajuste(mcp_server.AJUSTE_ALUMNOS, "1" if d["alumnos"] else "0")
         return jsonify(ok=True)
 
     @app.post("/api/material/logo")
@@ -408,17 +426,7 @@ def crear_app(db_path: str | Path) -> Flask:
         nombre = re.sub(r"[^\w\-]+", "_", f"ACI_{aci['alumno_nombre']}_{aci['trimestre']}T").strip("_")
         return enviar_docx(nombre, exportar_aci(aci))
 
-    def carpeta_documentos() -> Path:
-        otra = os.environ.get("MUNDOPTAL_DOCUMENTOS")  # solo para las pruebas automáticas
-        if otra:
-            Path(otra).mkdir(parents=True, exist_ok=True)
-            return Path(otra)
-        destino = Path.home() / "Documents"
-        if not destino.exists():
-            destino = Path.home()
-        destino = destino / "Mundo PT-AL"
-        destino.mkdir(parents=True, exist_ok=True)
-        return destino
+    carpeta_documentos = biblioteca.carpeta_documentos
 
     def enviar_docx(nombre, datos):
         if request.args.get("guardar") == "1":
