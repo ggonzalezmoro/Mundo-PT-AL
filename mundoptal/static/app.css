@@ -403,3 +403,23 @@ button.cal-mas:hover { background: var(--verde-pastel); }
   .cal-dia { min-height: 56px; }
 }
 @media (max-width: 760px) { .ayuda-rejilla { display: none; } }
+
+/* ===================================================== Crear material (0.6.0) */
+.material-grid { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(340px, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .material-grid { grid-template-columns: 1fr; } }
+.material-campos { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); margin-top: 8px; }
+.nota-privacidad { background: var(--verde-pastel); border-radius: 8px; padding: 8px 12px; font-size: 13px; color: var(--verde); margin: 0 0 10px; }
+.tarjeta-ia { border-color: var(--lima-suave); }
+.sugerencias { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+button.sugerencia { background: var(--amarillo); border-color: #f0d98a; }
+.paginas-previa { margin: 8px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; max-height: 460px; overflow: auto; }
+.paginas-previa li { line-height: 1.35; }
+.paginas-previa .destacado { font-weight: 800; color: var(--verde); font-size: 16px; }
+.el-previa { font-size: 12px; margin-top: 2px; }
+.lista-material { list-style: none; margin: 0; padding: 0; }
+.lista-material li { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--borde); }
+.lm-texto { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.lm-texto .muted { font-size: 12px; }
+.formato { font-size: 10px; font-weight: 800; padding: 3px 5px; border-radius: 4px; color: #fff; }
+.formato.docx { background: #2b579a; }
+.formato.pptx { background: #c43e1c; }

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import re
 import sqlite3
 import tempfile
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import actualizador, db as basedatos, dictado, horario, informes, trabajo
+from . import actualizador, db as basedatos, dictado, horario, ia_material, informes, maqueta, material, trabajo
 from .config import APP_NAME, APP_VERSION, COLEGIO, DIAS, ESCALA, ESCALA_TEXTO, data_dir, static_dir
 from .planificador import Planificador, lunes_de
 from .store import Store, StoreError
@@ -130,6 +131,180 @@ def crear_app(db_path: str | Path) -> Flask:
     def avisos():
         return jsonify(trabajo.avisos(store, usuario_actual()))
 
+    # ------------------------------------------------------------ crear material
+    @app.errorhandler(ia_material.ErrorIA)
+    def _error_ia(e):
+        return jsonify(error=str(e)), 400
+
+    def ajuste(clave: str, defecto: str = "") -> str:
+        fila = store.q1("SELECT valor FROM meta WHERE clave = ?", (clave,))
+        return fila["valor"] if fila and fila["valor"] is not None else defecto
+
+    def poner_ajuste(clave: str, valor: str) -> None:
+        with store.tx():
+            store.conn.execute("INSERT INTO meta(clave, valor) VALUES (?, ?) ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor",
+                               (clave, valor))
+
+    def carpeta_material() -> Path:
+        d = carpeta_documentos() / "Material"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def logo_perfil(uid) -> Path:
+        return carpeta_material() / f"logo_fichas_{uid or 0}.png"
+
+    def cabecera_perfil(uid) -> str:
+        u = store.obtener_usuario(uid) if uid else None
+        return ajuste(f"material.cabecera.{uid or 0}", (u or {}).get("nombre", ""))
+
+    def pictos_activados() -> bool:
+        return ajuste("material.pictos", "1") == "1"
+
+    @app.get("/api/material/info")
+    def material_info():
+        uid = usuario_actual()
+        return jsonify(tipos=list(material.TIPOS.items()), clave=ia_material.hay_clave(), pictos=pictos_activados(),
+                       cabecera=cabecera_perfil(uid), logo_propio=logo_perfil(uid).exists(),
+                       carpeta=str(carpeta_material()))
+
+    @app.get("/api/material/sugerencias")
+    def material_sugerencias():
+        alumno_id = request.args.get("alumno_id", type=int)
+        if not alumno_id:
+            return jsonify([])
+        return jsonify(material.sugerencias(plan.items_pendientes(alumno_id)))
+
+    @app.post("/api/material/propuesta")
+    def material_propuesta():
+        d = cuerpo()
+        uid = usuario_actual()
+        nivel, formato = str(d.get("nivel") or "4"), d.get("formato") or "docx"
+        num = int(d.get("num") or 0) or None
+        if d.get("modo") == "ia":
+            objetivos = []
+            if d.get("alumno_id"):
+                objetivos = [i["texto"] for i in plan.items_pendientes(int(d["alumno_id"]))]
+            nombres = [a["nombre"] for a in store.listar_alumnos(uid, incluir_inactivos=True)]
+            r = ia_material.generar(d.get("peticion", ""), nivel, formato, num or 6, objetivos, nombres)
+            return jsonify(spec=r["spec"].model_dump(), anonimizados=r["anonimizados"], origen="ia")
+        try:
+            spec = material.plantilla(d.get("tipo", ""), d.get("contenido", ""), nivel, num)
+        except ValueError as e:
+            raise StoreError(str(e)) from None
+        return jsonify(spec=spec.model_dump(), anonimizados=[], origen="plantilla")
+
+    @app.post("/api/material/crear")
+    def material_crear():
+        d = cuerpo()
+        uid = usuario_actual()
+        try:
+            spec = material.MaterialSpec.model_validate(d.get("spec") or {})
+        except Exception:
+            raise StoreError("El material no es válido. Vuelve a preparar la propuesta.") from None
+        if not spec.paginas:
+            raise StoreError("El material no tiene páginas")
+        formato = "pptx" if d.get("formato") == "pptx" else "docx"
+        alumno = store.q1("SELECT nombre FROM alumnos WHERE id = ?", (d.get("alumno_id"),)) if d.get("alumno_id") else None
+        logo = logo_perfil(uid)
+        rec = maqueta.Recursos(carpeta_pictos=carpeta_documentos() / "Pictogramas" if pictos_activados() else None,
+                               descargar_pictos=pictos_activados(), logo=logo if logo.exists() else None,
+                               cabecera=cabecera_perfil(uid), alumno=(alumno or {}).get("nombre", "") if formato == "docx" else "")
+        datos = maqueta.a_word(spec, rec) if formato == "docx" else maqueta.a_powerpoint(spec, rec)
+        base = re.sub(r"[^\w\-]+", "_", f"{dt.date.today():%Y-%m-%d}_{spec.titulo}").strip("_")[:80] or "material"
+        ruta = carpeta_material() / f"{base}.{formato}"
+        n = 2
+        while ruta.exists():
+            ruta = carpeta_material() / f"{base}_{n}.{formato}"
+            n += 1
+        ruta.write_bytes(datos)
+        with store.tx() as c:
+            mid = c.execute("""INSERT INTO materiales(usuario_id, alumno_id, titulo, tipo, origen, formato, paginas, ruta)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (uid, d.get("alumno_id") or None, spec.titulo, d.get("tipo", ""), d.get("origen") or "plantilla",
+                             formato, len(spec.paginas), str(ruta))).lastrowid
+        if d.get("abrir"):
+            abrir_archivo(ruta)
+        return jsonify(id=mid, ruta=str(ruta), nombre=ruta.name)
+
+    def abrir_archivo(ruta: Path) -> bool:
+        if hasattr(os, "startfile") and ruta.exists():
+            try:
+                os.startfile(str(ruta))  # noqa: S606 - abre el documento con Word o PowerPoint
+                return True
+            except OSError:
+                return False
+        return False
+
+    def material_de(mid: int) -> dict:
+        m = store.q1("SELECT * FROM materiales WHERE id = ?", (mid,))
+        if not m:
+            raise StoreError("Material no encontrado")
+        return m
+
+    @app.get("/api/materiales")
+    def materiales():
+        filas = store.q("""SELECT m.*, al.nombre AS alumno FROM materiales m LEFT JOIN alumnos al ON al.id = m.alumno_id
+                           WHERE m.usuario_id IS ? ORDER BY m.id DESC LIMIT 200""", (usuario_actual(),))
+        for f in filas:
+            f["existe"] = Path(f["ruta"]).exists()
+        return jsonify(filas)
+
+    @app.post("/api/materiales/<int:mid>/abrir")
+    def material_abrir(mid):
+        ruta = Path(material_de(mid)["ruta"])
+        if not ruta.exists():
+            raise StoreError("El archivo ya no está en la carpeta de material")
+        return jsonify(abierto=abrir_archivo(ruta), ruta=str(ruta))
+
+    @app.get("/api/materiales/<int:mid>/archivo")
+    def material_archivo(mid):
+        ruta = Path(material_de(mid)["ruta"])
+        if not ruta.exists():
+            return jsonify(error="El archivo ya no existe"), 404
+        return send_from_directory(ruta.parent, ruta.name, as_attachment=True)
+
+    @app.post("/api/material/clave")
+    def material_guardar_clave():
+        ia_material.guardar_clave(cuerpo().get("clave", ""))
+        return jsonify(ok=True)
+
+    @app.delete("/api/material/clave")
+    def material_borrar_clave():
+        ia_material.borrar_clave()
+        return jsonify(ok=True)
+
+    @app.post("/api/material/clave/probar")
+    def material_probar_clave():
+        return jsonify(ok=True, modelo=ia_material.probar_clave())
+
+    @app.post("/api/material/ajustes")
+    def material_ajustes():
+        d = cuerpo()
+        uid = usuario_actual()
+        if "pictos" in d:
+            poner_ajuste("material.pictos", "1" if d["pictos"] else "0")
+        if "cabecera" in d:
+            poner_ajuste(f"material.cabecera.{uid or 0}", str(d["cabecera"] or "").strip()[:80])
+        return jsonify(ok=True)
+
+    @app.post("/api/material/logo")
+    def material_subir_logo():
+        archivo = request.files.get("archivo")
+        if not archivo:
+            raise StoreError("Elige una imagen PNG o JPG")
+        datos = archivo.read()
+        if not (datos.startswith(b"\x89PNG") or datos.startswith(b"\xff\xd8")):
+            raise StoreError("El logo tiene que ser una imagen PNG o JPG")
+        logo_perfil(usuario_actual()).write_bytes(datos)  # python-docx y python-pptx leen PNG y JPG por su contenido
+        return jsonify(ok=True)
+
+    @app.delete("/api/material/logo")
+    def material_quitar_logo():
+        logo = logo_perfil(usuario_actual())
+        if logo.exists():
+            logo.unlink()
+        return jsonify(ok=True)
+
     # ------------------------------------------------------------ edición genérica
     @app.patch("/api/<tabla>/<int:id_>")
     def actualizar(tabla, id_):
@@ -184,6 +359,10 @@ def crear_app(db_path: str | Path) -> Flask:
         return enviar_docx(nombre, exportar_aci(aci))
 
     def carpeta_documentos() -> Path:
+        otra = os.environ.get("MUNDOPTAL_DOCUMENTOS")  # solo para las pruebas automáticas
+        if otra:
+            Path(otra).mkdir(parents=True, exist_ok=True)
+            return Path(otra)
         destino = Path.home() / "Documents"
         if not destino.exists():
             destino = Path.home()

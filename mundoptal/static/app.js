@@ -72,6 +72,7 @@ const rutas = [
   [/^#\/informes$/, vistaInformes, "informes"],
   [/^#\/informe\/(\d+)$/, vistaInforme, "informes"],
   [/^#\/trabajo(?:\/(dia|semana|mes))?(?:\/(\d{4}-\d{2}(?:-\d{2})?))?$/, vistaTrabajo, "trabajo"],
+  [/^#\/material$/, vistaMaterial, "material"],
 ];
 
 async function enrutar() {
@@ -1411,7 +1412,200 @@ async function pintarAvisos(caja, conEnlace = true) {
     ${conEnlace ? `<a href="#/trabajo">Ver mi trabajo PT/AL</a>` : ""}</div>` : "";
 }
 
+// ======================================================================= crear material
+const NOMBRE_ACT = { letra: "Letra grande", repasar: "Repasar", rodear: "Rodear", unir: "Unir con flechas", completar: "Completar",
+  contar: "Contar", clasificar: "Clasificar", secuencia: "Secuencia", tarjetas: "Tarjetas", pregunta: "Pregunta", cuento: "Cuento" };
+let PROPUESTA = null;  // { spec, origen, tipo, alumno_id }
+
+async function vistaMaterial() {
+  const [info, alumnos, lista] = await Promise.all([api("GET", "/api/material/info"), api("GET", "/api/alumnos"), api("GET", "/api/materiales")]);
+  const tipos = info.tipos;
+  const opcAlumnos = `<option value="">Ninguno</option>${alumnos.map((a) => `<option value="${a.id}">${esc(a.nombre)}</option>`).join("")}`;
+  const comunes = (p) => `<div class="campos material-campos">
+      <div><label>Alumno (opcional)</label><select id="${p}-alumno">${opcAlumnos}</select></div>
+      <div><label>Nivel</label><select id="${p}-nivel"><option value="3">3 años</option><option value="4" selected>4 años</option><option value="5">5 años</option></select></div>
+      <div><label>Formato</label><select id="${p}-formato"><option value="docx">Word · fichas para imprimir</option><option value="pptx">PowerPoint · para proyectar</option></select></div>
+      <div><label>Nº de fichas o diapositivas</label><input type="number" id="${p}-num" min="1" max="${p === "ia" ? 20 : 40}" placeholder="${p === "ia" ? "6" : "Todas"}" value="${p === "ia" ? 6 : ""}"></div></div>`;
+  vista.innerHTML = `
+    <div class="cabecera"><div><h1>Crear material</h1>
+      <p class="sub">Fichas en Word para imprimir o diapositivas en PowerPoint, con el logo del colegio y pictogramas de ARASAAC.</p></div></div>
+    <div class="material-grid">
+      <div>
+        <div class="tarjeta tarjeta-ia"><h2>✨ Pídeselo a Claude</h2>
+          <p class="nota-privacidad">🔒 Para crear el material se envía tu petición a Claude por Internet. No se envían nombres ni datos de tus alumnos.</p>
+          ${info.clave ? "" : `<div class="aviso-trabajo">Para usar Claude añade tu clave en <a href="#/ajustes">Ajustes › Crear material con Claude</a>. Mientras tanto, puedes usar las plantillas de abajo, que funcionan sin Internet.</div>`}
+          <label>¿Qué material quieres?</label>
+          <div class="fila" style="gap:6px;align-items:flex-start"><textarea id="ia-peticion" rows="3" style="flex:1"
+            placeholder="Por ejemplo: «fichas para trabajar las vocales con animales» o «un cuento corto para trabajar la rutina de lavarse las manos»"></textarea>${botonMicro("ia-peticion")}</div>
+          ${comunes("ia")}
+          <div id="sugerencias-ia" class="sugerencias"></div>
+          <p style="margin:10px 0 0"><button class="primario" id="ia-preparar" ${info.clave ? "" : "disabled"}>✨ Preparar propuesta</button>
+            <span class="muted" id="ia-estado"></span></p></div>
+        <div class="tarjeta"><h2>📋 Con plantillas (sin Internet)</h2>
+          <div class="campos material-campos">
+            <div><label>Tipo de material</label><select id="pl-tipo">${tipos.map(([k, t]) => `<option value="${k}">${esc(t.nombre)}</option>`).join("")}</select></div>
+            <div class="campo-ancho"><label>Contenido</label><input id="pl-contenido" placeholder="${esc(tipos[0][1].ejemplo)}">
+              <p class="muted" id="pl-ayuda" style="margin:3px 0 0;font-size:12px">${esc(tipos[0][1].ayuda)}</p></div></div>
+          ${comunes("pl")}
+          <div id="sugerencias-pl" class="sugerencias"></div>
+          <p style="margin:10px 0 0"><button class="primario" id="pl-preparar">👀 Ver propuesta</button></p></div>
+      </div>
+      <div>
+        <div class="tarjeta" id="tarjeta-propuesta"><h2>Vista previa</h2>
+          <div class="vacio">Prepara una propuesta con Claude o con una plantilla y aquí verás sus páginas antes de crear el archivo.</div></div>
+        <div class="tarjeta"><h2>Material creado</h2>
+          ${lista.length ? `<ul class="lista-material">${lista.map((m) => `<li>
+              <span class="formato ${m.formato}">${m.formato === "pptx" ? "PPT" : "DOC"}</span>
+              <div class="lm-texto"><strong>${esc(m.titulo)}</strong>
+                <span class="muted">${esc((m.creado || "").slice(0, 10))} · ${m.paginas} ${m.formato === "pptx" ? "diapositivas" : "fichas"}${m.origen === "ia" ? " · ✨ Claude" : ""}${m.alumno ? " · " + esc(m.alumno) : ""}${m.existe ? "" : " · ⚠ archivo movido o borrado"}</span></div>
+              ${m.existe ? `<button class="mini" data-abrir-material="${m.id}">Abrir</button><a class="boton mini" href="/api/materiales/${m.id}/archivo">Descargar</a>` : ""}
+              <button class="icono" data-quitar-material="${m.id}" title="Quitar de la lista (el archivo no se borra)">✕</button></li>`).join("")}</ul>`
+            : `<div class="vacio" style="padding:16px">Todavía no has creado material.</div>`}
+          <p class="muted" style="margin:8px 0 0;font-size:12px">Se guarda en: ${esc(info.carpeta)}</p></div>
+      </div>
+    </div>`;
+  enlazarMicros(vista);
+  const datos = (p) => ({ alumno_id: $(`#${p}-alumno`).value || null, nivel: $(`#${p}-nivel`).value, formato: $(`#${p}-formato`).value,
+    num: Number($(`#${p}-num`).value) || null });
+  $("#pl-tipo").onchange = () => {
+    const t = Object.fromEntries(tipos)[$("#pl-tipo").value];
+    $("#pl-contenido").placeholder = t.ejemplo;
+    $("#pl-ayuda").textContent = t.ayuda;
+  };
+  for (const p of ["ia", "pl"]) {
+    $(`#${p}-alumno`).onchange = async () => {
+      const caja = $(`#sugerencias-${p}`);
+      const id = $(`#${p}-alumno`).value;
+      if (!id) { caja.innerHTML = ""; return; }
+      const sug = await api("GET", `/api/material/sugerencias?alumno_id=${id}`).catch(() => []);
+      caja.innerHTML = sug.length ? `<span class="muted">Según su ACI:</span> ${sug.map((s, i) =>
+        `<button class="mini sugerencia" data-sug="${i}" title="${esc(s.motivo)}">${esc(Object.fromEntries(tipos)[s.tipo].nombre)}${s.contenido ? ": " + esc(s.contenido) : ""}</button>`).join("")}` : "";
+      $$("[data-sug]", caja).forEach((b) => b.onclick = () => {
+        const s = sug[Number(b.dataset.sug)];
+        if (p === "pl") { $("#pl-tipo").value = s.tipo; $("#pl-tipo").onchange(); $("#pl-contenido").value = s.contenido; }
+        else $("#ia-peticion").value = `Material para trabajar: ${s.motivo.toLowerCase()}`;
+      });
+    };
+  }
+  $("#pl-preparar").onclick = () => intentar(async () => {
+    const d = datos("pl");
+    const r = await api("POST", "/api/material/propuesta", { modo: "plantilla", tipo: $("#pl-tipo").value, contenido: $("#pl-contenido").value, ...d });
+    PROPUESTA = { ...r, tipo: $("#pl-tipo").value, ...d };
+    pintarPropuesta();
+  });
+  $("#ia-preparar").onclick = () => intentar(async () => {
+    const b = $("#ia-preparar");
+    b.disabled = true;
+    $("#ia-estado").textContent = " Claude está preparando el material… (puede tardar un minuto)";
+    try {
+      const d = datos("ia");
+      const r = await api("POST", "/api/material/propuesta", { modo: "ia", peticion: $("#ia-peticion").value, ...d });
+      PROPUESTA = { ...r, tipo: "ia", ...d };
+      if (r.anonimizados.length) aviso(`Se han quitado los nombres de la petición antes de enviarla (${r.anonimizados.join(", ")} → «el alumno»).`);
+      pintarPropuesta();
+    } finally { b.disabled = false; $("#ia-estado").textContent = ""; }
+  });
+  $$("[data-abrir-material]").forEach((b) => b.onclick = () => intentar(async () => {
+    const r = await api("POST", `/api/materiales/${b.dataset.abrirMaterial}/abrir`);
+    if (!r.abierto) aviso("Está en " + r.ruta);
+  }));
+  $$("[data-quitar-material]").forEach((b) => b.onclick = () => intentar(async () => {
+    if (!confirm("¿Quitar este material de la lista? El archivo se queda en la carpeta.")) return;
+    await api("DELETE", `/api/materiales/${b.dataset.quitarMaterial}`);
+    vistaMaterial();
+  }));
+  if (PROPUESTA) pintarPropuesta();
+}
+
+function pintarPropuesta() {
+  const caja = $("#tarjeta-propuesta");
+  if (!caja || !PROPUESTA) return;
+  const s = PROPUESTA.spec;
+  const textoEl = (e) => [e.pictograma && e.pictograma !== e.texto ? `🖼 ${e.pictograma}` : "", e.texto, e.pareja ? `→ ${e.pareja}` : "",
+    e.cantidad ? `×${e.cantidad}` : "", e.grupo ? `[${e.grupo}]` : "", e.correcto ? "✔" : ""].filter(Boolean).join(" ");
+  caja.innerHTML = `<h2>Vista previa ${PROPUESTA.origen === "ia" ? '<span class="chip">✨ Claude</span>' : '<span class="chip">Plantilla</span>'}</h2>
+    <h3 style="margin:0 0 2px">${esc(s.titulo)}</h3>
+    <p class="muted" style="margin:0 0 6px">${esc(s.objetivo)}</p>
+    ${s.instrucciones_maestra ? `<details><summary class="muted">Ideas para usarlo</summary><p>${esc(s.instrucciones_maestra)}</p></details>` : ""}
+    <ol class="paginas-previa">${s.paginas.map((p) => `<li><span class="chip">${esc(NOMBRE_ACT[p.actividad] || p.actividad)}</span>
+        <strong>${esc(p.enunciado)}</strong>${p.destacado ? ` <span class="destacado">${esc(p.destacado)}</span>` : ""}
+        ${p.elementos.length ? `<div class="muted el-previa">${p.elementos.slice(0, 10).map((e) => esc(textoEl(e))).join(" · ")}${p.elementos.length > 10 ? " …" : ""}</div>` : ""}</li>`).join("")}</ol>
+    <div class="fila" style="gap:8px;flex-wrap:wrap;margin-top:10px">
+      <button class="primario" data-crear="docx">📄 Crear Word</button><button class="primario" data-crear="pptx">📊 Crear PowerPoint</button>
+      <button id="descartar-propuesta">Descartar</button></div>
+    <p class="muted" style="font-size:12px;margin:6px 0 0">El archivo se guarda y se abre con Word o PowerPoint. Después puedes retocarlo allí.</p>`;
+  $$("[data-crear]", caja).forEach((b) => b.onclick = () => intentar(async () => {
+    b.disabled = true;
+    const txt = b.textContent;
+    b.textContent = "Creando…";
+    try {
+      const r = await api("POST", "/api/material/crear", { spec: s, formato: b.dataset.crear, alumno_id: PROPUESTA.alumno_id,
+        origen: PROPUESTA.origen, tipo: PROPUESTA.tipo, abrir: true });
+      aviso("Material guardado: " + r.nombre);
+      vistaMaterial();
+    } finally { b.disabled = false; b.textContent = txt; }
+  }));
+  $("#descartar-propuesta").onclick = () => { PROPUESTA = null; vistaMaterial(); };
+}
+
 // ======================================================================= ajustes
+async function pintarAjustesMaterial() {
+  const caja = $("#ajustes-material");
+  if (!USUARIO) { caja.innerHTML = "<h2>Crear material con Claude</h2><p class='muted'>Elige primero tu perfil.</p>"; return; }
+  const info = await api("GET", "/api/material/info").catch(() => null);
+  if (!info || !caja.isConnected) return;
+  caja.innerHTML = `<h2>Crear material con Claude</h2>
+    <p class="nota-privacidad">🔒 Solo el apartado «Crear material» usa Internet: se envía tu petición a Claude, sin nombres ni datos de tus alumnos. Lo demás sigue sin salir del ordenador.</p>
+    <p>Clave de Claude: ${info.clave ? "<strong>✅ configurada</strong> (guardada en el Administrador de credenciales de Windows)" : "<strong>sin configurar</strong>"}</p>
+    <div class="fila" style="gap:6px;flex-wrap:wrap"><input type="password" id="clave-claude" placeholder="Pega aquí tu clave (sk-ant-…)" style="flex:1;min-width:240px" autocomplete="off">
+      <button class="primario" id="guardar-clave">Guardar</button><button id="probar-clave" ${info.clave ? "" : "disabled"}>Probar</button>
+      ${info.clave ? '<button class="peligro" id="borrar-clave">Quitar clave</button>' : ""}</div>
+    <details style="margin-top:8px"><summary>¿Cómo consigo la clave? (3 pasos)</summary><ol>
+      <li>Entra en <strong>platform.claude.com</strong> y crea una cuenta (o inicia sesión).</li>
+      <li>En <strong>Billing</strong>, añade saldo (por ejemplo 5 €; cada material cuesta unos céntimos).</li>
+      <li>En <strong>API Keys › Create Key</strong>, crea una clave, cópiala y pégala aquí.</li></ol>
+      <p class="muted">La clave no se guarda en la base de datos de la aplicación ni se comparte: queda en el Administrador de credenciales de Windows de este ordenador.</p></details>
+    <hr style="border:none;border-top:1px solid var(--borde);margin:14px 0">
+    <h3 style="margin:0 0 6px">Cómo salen las fichas</h3>
+    <label class="fila" style="gap:6px"><input type="checkbox" id="pictos-arasaac" ${info.pictos ? "checked" : ""} style="width:auto"> Usar pictogramas de ARASAAC (se descargan de Internet la primera vez y se guardan en Documentos › Mundo PT-AL › Pictogramas)</label>
+    <div class="campos" style="margin-top:10px"><div class="campo-ancho"><label>Texto de la cabecera</label>
+      <input id="cabecera-fichas" value="${esc(info.cabecera)}" placeholder="Tu nombre"></div></div>
+    <p class="muted" style="font-size:12px;margin:3px 0 10px">Sale arriba a la derecha en cada ficha, seguido de «PT/AL».</p>
+    <p>Logo de las fichas: ${info.logo_propio ? "<strong>tu logo</strong>" : "logo del colegio"}
+      <label class="boton" for="logo-fichas">🖼 Cambiar logo</label><input type="file" id="logo-fichas" accept=".png,.jpg,.jpeg" hidden>
+      ${info.logo_propio ? '<button id="logo-original">Volver al logo del colegio</button>' : ""}</p>`;
+  const recargar = () => pintarAjustesMaterial();
+  $("#guardar-clave").onclick = () => intentar(async () => {
+    const clave = $("#clave-claude").value.trim();
+    if (!clave) { $("#clave-claude").focus(); return; }
+    await api("POST", "/api/material/clave", { clave });
+    $("#clave-claude").value = "";
+    aviso("Clave guardada");
+    recargar();
+  });
+  $("#probar-clave").onclick = () => intentar(async () => {
+    const r = await api("POST", "/api/material/clave/probar");
+    aviso(`✅ La clave funciona (${r.modelo})`);
+  });
+  if ($("#borrar-clave")) $("#borrar-clave").onclick = () => intentar(async () => {
+    if (!confirm("¿Quitar la clave de Claude de este ordenador?")) return;
+    await api("DELETE", "/api/material/clave");
+    recargar();
+  });
+  $("#pictos-arasaac").onchange = (e) => intentar(() => api("POST", "/api/material/ajustes", { pictos: e.target.checked }));
+  $("#cabecera-fichas").onchange = (e) => intentar(async () => { await api("POST", "/api/material/ajustes", { cabecera: e.target.value }); aviso("Cabecera guardada"); });
+  $("#logo-fichas").onchange = (e) => intentar(async () => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append("archivo", f);
+    await api("POST", "/api/material/logo", fd);
+    aviso("Logo guardado");
+    recargar();
+  });
+  if ($("#logo-original")) $("#logo-original").onclick = () => intentar(async () => { await api("DELETE", "/api/material/logo"); recargar(); });
+}
+
 async function vistaAjustes() {
   const voz = await api("GET", "/api/voz");
   vista.innerHTML = `
@@ -1435,7 +1629,9 @@ async function vistaAjustes() {
     <div class="tarjeta"><h2>Dictado por voz</h2>
       ${voz.disponible ? `<p>✅ Dictado sin conexión disponible (el audio no sale del ordenador).</p>`
         : `<p>⚠️ ${esc(voz.motivo)}</p><p class="muted">Mientras tanto puedes usar el dictado de Windows: haz clic en el cuadro de texto y pulsa <strong>Windows + H</strong>.</p>`}
-    </div>`;
+    </div>
+    <div class="tarjeta" id="ajustes-material"><h2>Crear material con Claude</h2><p class="muted">Cargando…</p></div>`;
+  pintarAjustesMaterial();
   $("#copia").onclick = () => intentar(async () => { const r = await api("POST", "/api/copia-seguridad"); aviso("Copia guardada en " + r.ruta); });
   $("#buscar-act").onclick = () => buscarActualizacion(true);
   if (ACTUALIZACION) pintarActualizacion(ACTUALIZACION);

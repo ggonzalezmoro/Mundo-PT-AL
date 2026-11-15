@@ -32,6 +32,7 @@ CAMPOS_EDITABLES = {
     "informe_areas": {"area", "texto", "orden"},
     "tareas": {"texto", "categoria", "alumno_id", "fecha_limite", "hecha", "orden"},
     "citas": {"fecha", "hora_inicio", "hora_fin", "tipo", "alumno_id", "con_quien", "lugar", "notas", "hecha"},
+    "materiales": {"titulo"},
 }
 
 ADAPTACIONES_POR_DEFECTO = [

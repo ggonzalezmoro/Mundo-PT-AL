@@ -12,7 +12,10 @@ hiddenimports = []
 if Path("models").exists():
     datas.append(("models", "models"))
 
-for paquete in ("vosk", "_sounddevice_data", "webview", "docx", "openpyxl"):
+# pptx: plantillas internas; anthropic/keyring: «Crear material con Claude» (keyring busca su
+# almacén por metadatos, así que se copian también los de win32ctypes)
+for paquete in ("vosk", "_sounddevice_data", "webview", "docx", "openpyxl", "pptx", "anthropic", "keyring",
+                "win32ctypes", "jaraco"):
     try:
         d, b, h = collect_all(paquete)
         datas += d
@@ -26,7 +29,7 @@ a = Analysis(
     pathex=["."],
     binaries=binaries,
     datas=datas,
-    hiddenimports=hiddenimports + ["sounddevice"],
+    hiddenimports=hiddenimports + ["sounddevice", "keyring.backends.Windows", "win32ctypes.pywin32.win32cred"],
     excludes=["tkinter", "pytest"],
 )
 pyz = PYZ(a.pure)
