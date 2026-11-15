@@ -254,3 +254,58 @@ nav a.con-aviso::after { content: "●"; color: #d9534f; margin-left: 6px; font-
 /* Asistencia */
 .chip.falta { background: #fde8e8; color: var(--rojo); }
 .asistencia-informe { background: var(--verde-pastel); border-radius: 8px; padding: 2px 12px; margin-bottom: 8px; }
+
+/* ===================================================== Mi trabajo PT/AL */
+.trabajo-grid { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.4fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .trabajo-grid { grid-template-columns: 1fr; } }
+.nueva-tarea { background: var(--verde-pastel); border-radius: var(--radio); padding: 10px; margin-bottom: 10px; }
+.nueva-tarea input, .nueva-tarea select { min-width: 0; }
+.filtros { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.filtros button.activo { outline: 2px solid var(--verde); font-weight: 700; }
+.lista-tareas { list-style: none; margin: 0; padding: 0; }
+.tarea { display: flex; gap: 10px; align-items: flex-start; padding: 8px 4px; border-bottom: 1px solid var(--borde); }
+.tarea input[type=checkbox] { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--verde); flex: none; cursor: pointer; }
+.tarea-texto { flex: 1; }
+.tarea-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 3px; font-size: 12px; }
+.tarea.hecha .tarea-texto { text-decoration: line-through; color: var(--texto-2); }
+.tarea.vencida .fecha-limite { color: var(--rojo); font-weight: 700; }
+.tarea.vencida { background: #fdf3f2; }
+details.hechas { margin-top: 12px; }
+details.hechas summary { cursor: pointer; color: var(--texto-2); font-weight: 600; }
+.cat { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; border: none; }
+.cat.material { background: #dff0c2; color: #3e6a0c; }
+.cat.prueba { background: #dbe9fb; color: #1f4f8a; }
+.cat.correos { background: #fbe3c4; color: #8a4b06; }
+.cat.tutoria { background: #f6dcec; color: #8a2463; }
+.cat.reunion { background: #e6e0f7; color: #4b3a8f; }
+.cat.otros { background: #ececec; color: #4a4a4a; }
+.cal-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.cal-cab h2 { margin: 0 6px; min-width: 150px; text-align: center; }
+.cal-cab #nueva-cita { margin-left: auto; }
+.leyenda { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.calendario { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+.cal-dia-nombre { text-align: center; font-size: 12px; font-weight: 700; color: var(--texto-2); padding: 2px 0; }
+.cal-dia { min-height: 78px; background: #fff; border: 1px solid var(--borde); border-radius: 6px; padding: 3px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.cal-dia:hover { border-color: var(--lima); background: #fbfdf8; }
+.cal-dia .num { font-size: 12px; font-weight: 700; color: var(--texto-2); }
+.cal-dia.otro-mes { background: #f4f6f2; opacity: .6; }
+.cal-dia.hoy { border: 2px solid var(--verde); }
+.cal-dia.hoy .num { color: var(--verde); }
+.cita { display: block; text-align: left; font-size: 11px; line-height: 1.25; padding: 2px 5px; border-radius: 5px; border: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; max-width: 100%; }
+.leyenda .cita, .lista-citas .cita { display: inline-block; cursor: default; }
+.lista-citas .cita { cursor: pointer; }
+.cita.tutoria_familia { background: #f6dcec; color: #8a2463; }
+.cita.reunion_terapeutas { background: #e6e0f7; color: #4b3a8f; }
+.cita.otra { background: #dbe9fb; color: #1f4f8a; }
+.cita.hecha { opacity: .5; text-decoration: line-through; }
+.lista-citas { list-style: none; margin: 0; padding: 0; }
+.lista-citas li { padding: 6px 0; border-bottom: 1px solid var(--borde); }
+.aviso-trabajo { background: var(--amarillo); border: 1px solid #f0d98a; border-radius: var(--radio); padding: 10px 14px; margin-bottom: 14px; }
+.aviso-trabajo ul { margin: 4px 0 4px 18px; padding: 0; }
+.aviso-trabajo li.vencida { color: var(--rojo); }
+.nueva-tarea .fila { display: flex; align-items: center; }
+.nueva-tarea #t-texto { flex: 1 1 auto; width: auto; }
+.nueva-tarea select, .nueva-tarea input[type=date] { width: auto; flex: 1 1 130px; }
+.nueva-tarea #t-anadir { flex: none; }

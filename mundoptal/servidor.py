@@ -9,7 +9,7 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import actualizador, db as basedatos, dictado, horario, informes
+from . import actualizador, db as basedatos, dictado, horario, informes, trabajo
 from .config import APP_NAME, APP_VERSION, COLEGIO, DIAS, ESCALA, ESCALA_TEXTO, data_dir, static_dir
 from .planificador import Planificador, lunes_de
 from .store import Store, StoreError
@@ -93,6 +93,42 @@ def crear_app(db_path: str | Path) -> Flask:
     def alumno(id_):
         al = store.obtener_alumno(id_)
         return (jsonify(al), 200) if al else (jsonify(error="No encontrado"), 404)
+
+    # ------------------------------------------------------------ mi trabajo PT/AL
+    @app.get("/api/trabajo/info")
+    def trabajo_info():
+        # Como listas para conservar el orden (los diccionarios JSON se ordenan alfabéticamente)
+        return jsonify(categorias=list(trabajo.CATEGORIAS.items()), tipos_cita=list(trabajo.TIPOS_CITA.items()))
+
+    @app.get("/api/tareas")
+    def tareas():
+        return jsonify(trabajo.listar_tareas(store, usuario_actual()))
+
+    @app.post("/api/tareas")
+    def crear_tarea():
+        return jsonify(id=trabajo.crear_tarea(store, usuario_actual(), cuerpo()))
+
+    @app.post("/api/tareas/borrar-hechas")
+    def borrar_tareas_hechas():
+        return jsonify(borradas=trabajo.borrar_hechas(store, usuario_actual()))
+
+    @app.get("/api/citas")
+    def citas():
+        a = request.args
+        if a.get("mes"):
+            desde, hasta = trabajo.rango_mes(a["mes"])
+        else:
+            desde, hasta = a.get("desde", ""), a.get("hasta", "")
+        return jsonify(desde=desde, hasta=hasta,
+                       citas=trabajo.listar_citas(store, usuario_actual(), desde, hasta, a.get("alumno_id", type=int)))
+
+    @app.post("/api/citas")
+    def crear_cita():
+        return jsonify(id=trabajo.crear_cita(store, usuario_actual(), cuerpo()))
+
+    @app.get("/api/avisos")
+    def avisos():
+        return jsonify(trabajo.avisos(store, usuario_actual()))
 
     # ------------------------------------------------------------ edición genérica
     @app.patch("/api/<tabla>/<int:id_>")

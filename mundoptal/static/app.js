@@ -58,6 +58,7 @@ const rutas = [
   [/^#\/perfiles$/, vistaPerfiles, "perfiles"],
   [/^#\/informes$/, vistaInformes, "informes"],
   [/^#\/informe\/(\d+)$/, vistaInforme, "informes"],
+  [/^#\/trabajo(?:\/(\d{4}-\d{2}))?$/, vistaTrabajo, "trabajo"],
 ];
 
 async function enrutar() {
@@ -162,6 +163,13 @@ async function vistaAlumno(id) {
           <td><a class="boton mini" href="#/informe/${x.id}">Abrir</a></td></tr>`).join("")}</table>`
         : `<div class="vacio">Sin informes todavía.</div>`}
       <p style="margin:12px 0 0"><button id="nuevo-informe">📝 Informe del trimestre actual</button></p></div>
+    <div class="tarjeta"><h2>Tutorías y reuniones</h2>
+      ${(a.citas || []).length ? `<ul class="lista-citas">${a.citas.map((c) => `<li>
+          <button type="button" class="cita ${c.tipo} ${c.hecha ? "hecha" : ""}" data-cita-alumno="${c.id}">${c.tipo === "tutoria_familia" ? "Tutoría familia" : c.tipo === "reunion_terapeutas" ? "Reunión terapeutas" : "Cita"}</button>
+          <strong>${fechaCorta(c.fecha)}/${c.fecha.slice(0, 4)}</strong>${c.hora_inicio ? " · " + c.hora_inicio : ""}${c.con_quien ? " · " + esc(c.con_quien) : ""}
+          ${c.notas ? `<div class="muted" style="margin-left:4px">${esc(c.notas)}</div>` : ""}</li>`).join("")}</ul>`
+        : `<div class="vacio" style="padding:16px">Sin tutorías ni reuniones todavía.</div>`}
+      <p style="margin:12px 0 0"><button id="nueva-tutoria">＋ Nueva tutoría o reunión</button></p></div>
     <div class="tarjeta"><h2>ACIs</h2>
       ${a.acis.length ? `<table class="tabla-adapt"><tr><th>Trimestre</th><th>Curso escolar</th><th>Curso</th><th>Última modificación</th><th></th></tr>
         ${a.acis.map((x, i) => `<tr><td>${x.trimestre}º trimestre ${i === 0 ? '<span class="chip">vigente</span>' : ""}</td><td>${esc(x.curso_escolar)}</td>
@@ -176,6 +184,10 @@ async function vistaAlumno(id) {
   });
   $("#importar").onchange = (e) => importarWord(e.target.files[0], id);
   $("#nuevo-informe").onclick = () => crearInforme(id);
+  const alumnosCita = [{ id: a.id, nombre: a.nombre }];
+  $("#nueva-tutoria").onclick = () => dialogoCita({ fecha: hoyISO(), alumno_id: a.id, tipo: "tutoria_familia" }, alumnosCita, () => vistaAlumno(id));
+  $$("[data-cita-alumno]").forEach((b) => b.onclick = () =>
+    dialogoCita(a.citas.find((c) => String(c.id) === b.dataset.citaAlumno), alumnosCita, () => vistaAlumno(id)));
   $("#borrar-alumno").onclick = () => intentar(async () => {
     if (!confirm(`¿Seguro que quieres borrar a ${a.nombre} y todas sus ACIs y sesiones? No se puede deshacer.`)) return;
     await api("DELETE", `/api/alumnos/${id}`);
@@ -651,6 +663,7 @@ async function vistaAgenda(semana) {
         <button class="primario" id="planificar">⚡ Planificar semana</button>
         <button id="replanificar" title="Vuelve a repartir los ítems de las sesiones aún no realizadas">↻ Replanificar</button>
       </div></div>
+    <div id="avisos-agenda"></div>
     ${ag.sesiones.length ? "" : `<div class="vacio" style="margin-bottom:14px">No hay sesiones planificadas esta semana. Configura <a href="#/horario">tu horario</a> y pulsa «Planificar semana».</div>`}
     <div class="semana">${INFO.dias.map((d, i) => { const f = sumarDias(desde, i); return `<div class="dia ${f === hoy ? "hoy" : ""}">
       <h3>${d} <small>${fechaCorta(f)}</small></h3><div class="bloques">${porDia[i].map(htmlSesion).join("") || '<div class="muted" style="text-align:center;padding:20px 0">—</div>'}</div></div>`; }).join("")}</div>`;
@@ -662,6 +675,7 @@ async function vistaAgenda(semana) {
     aviso(txt);
     vistaAgenda(desde);
   });
+  pintarAvisos($("#avisos-agenda"));
   $("#planificar").onclick = () => plan(false);
   $("#replanificar").onclick = () => { if (confirm("Se volverán a repartir los ítems de las sesiones no realizadas de esta semana. ¿Continuar?")) plan(true); };
 
@@ -979,6 +993,201 @@ async function pintarNotasInforme(I, esp) {
     ta.scrollIntoView({ behavior: "smooth", block: "center" });
     aviso("Añadido al informe");
   };
+}
+
+// ======================================================================= mi trabajo PT/AL
+let TRABAJO = null;            // categorías y tipos de cita
+let FILTRO_TAREA = "";         // categoría elegida en el filtro de tareas
+const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+const hoyISO = () => INFO.hoy || fechaISO(new Date());
+const mesDe = (iso) => iso.slice(0, 7);
+function sumarMeses(mes, n) {
+  const [a, m] = mes.split("-").map(Number);
+  const d = new Date(a, m - 1 + n, 1, 12);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function fechaLarga(iso) {
+  const d = new Date(iso + "T12:00:00");
+  return `${["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"][d.getDay()]} ${d.getDate()} de ${MESES[d.getMonth()]}`;
+}
+async function infoTrabajo() {
+  if (!TRABAJO) {
+    const r = await api("GET", "/api/trabajo/info");
+    TRABAJO = { categorias: Object.fromEntries(r.categorias), tipos_cita: Object.fromEntries(r.tipos_cita) };
+  }
+  return TRABAJO;
+}
+const etiquetaCita = (c) => [c.hora_inicio, c.alumno || c.con_quien || (TRABAJO ? TRABAJO.tipos_cita[c.tipo] : "")].filter(Boolean).join(" · ");
+
+async function vistaTrabajo(mes) {
+  await infoTrabajo();
+  mes = mes || mesDe(hoyISO());
+  const [tareas, cal, proximas, alumnos] = await Promise.all([
+    api("GET", "/api/tareas"), api("GET", `/api/citas?mes=${mes}`),
+    api("GET", `/api/citas?desde=${hoyISO()}&hasta=${sumarDias(hoyISO(), 90)}`), api("GET", "/api/alumnos")]);
+  const [a, m] = mes.split("-").map(Number);
+  vista.innerHTML = `
+    <div class="cabecera"><div><h1>Mi trabajo PT/AL</h1>
+      <p class="sub">Lo que haces fuera de las sesiones: material, pruebas, correos, tutorías y reuniones.</p></div></div>
+    <div id="avisos-trabajo"></div>
+    <div class="trabajo-grid">
+      <div class="tarjeta" id="tarjeta-tareas"></div>
+      <div class="tarjeta"><div class="cal-cab">
+          <a class="boton mini" href="#/trabajo/${sumarMeses(mes, -1)}" title="Mes anterior">◀</a>
+          <h2>${MESES[m - 1][0].toUpperCase() + MESES[m - 1].slice(1)} ${a}</h2>
+          <a class="boton mini" href="#/trabajo/${sumarMeses(mes, 1)}" title="Mes siguiente">▶</a>
+          <a class="boton mini" href="#/trabajo">Hoy</a>
+          <button class="primario mini" id="nueva-cita">＋ Nueva cita</button></div>
+        <div class="leyenda">${Object.entries(TRABAJO.tipos_cita).map(([k, t]) => `<span class="cita ${k}">${esc(t)}</span>`).join("")}</div>
+        <div class="calendario">${["L", "M", "X", "J", "V", "S", "D"].map((d) => `<div class="cal-dia-nombre">${d}</div>`).join("")}
+          ${diasCalendario(cal.desde, cal.hasta).map((f) => {
+            const del = cal.citas.filter((c) => c.fecha === f);
+            return `<div class="cal-dia ${mesDe(f) !== mes ? "otro-mes" : ""} ${f === hoyISO() ? "hoy" : ""}" data-dia="${f}" title="Pulsa para añadir una cita el ${fechaLarga(f)}">
+              <span class="num">${Number(f.slice(8))}</span>
+              ${del.map((c) => `<button type="button" class="cita ${c.tipo} ${c.hecha ? "hecha" : ""}" data-cita="${c.id}" title="${esc(TRABAJO.tipos_cita[c.tipo])}">${esc(etiquetaCita(c))}</button>`).join("")}</div>`;
+          }).join("")}</div>
+        <h3 style="margin:16px 0 6px">Próximas citas</h3>
+        ${proximas.citas.filter((c) => !c.hecha).length ? `<ul class="lista-citas">${proximas.citas.filter((c) => !c.hecha).slice(0, 12).map((c) => `<li>
+            <button type="button" class="cita ${c.tipo}" data-cita="${c.id}">${esc(TRABAJO.tipos_cita[c.tipo])}</button>
+            <strong>${fechaLarga(c.fecha)}</strong>${c.hora_inicio ? ` · ${c.hora_inicio}${c.hora_fin ? "–" + c.hora_fin : ""}` : ""}
+            ${c.alumno ? ` · ${esc(c.alumno)}` : ""}${c.con_quien ? ` · ${esc(c.con_quien)}` : ""}${c.lugar ? ` · <span class="muted">${esc(c.lugar)}</span>` : ""}</li>`).join("")}</ul>`
+          : `<p class="muted">No tienes citas en los próximos tres meses.</p>`}</div>
+    </div>`;
+  pintarTareas(tareas, alumnos);
+  pintarAvisos($("#avisos-trabajo"), false);
+  const todas = [...cal.citas, ...proximas.citas];
+  $$(".cal-dia").forEach((d) => d.onclick = (e) => {
+    if (e.target.closest("[data-cita]")) return;
+    dialogoCita({ fecha: d.dataset.dia }, alumnos, () => vistaTrabajo(mes));
+  });
+  $$("[data-cita]").forEach((b) => b.onclick = () =>
+    dialogoCita(todas.find((c) => String(c.id) === b.dataset.cita), alumnos, () => vistaTrabajo(mes)));
+  $("#nueva-cita").onclick = () => dialogoCita({ fecha: mesDe(hoyISO()) === mes ? hoyISO() : `${mes}-01` }, alumnos, () => vistaTrabajo(mes));
+}
+
+function diasCalendario(desde, hasta) {
+  const dias = [];
+  for (let f = desde; f <= hasta; f = sumarDias(f, 1)) dias.push(f);
+  return dias;
+}
+
+function pintarTareas(tareas, alumnos) {
+  const caja = $("#tarjeta-tareas");
+  const cats = TRABAJO.categorias;
+  const hoy = hoyISO();
+  const pendientes = tareas.filter((t) => !t.hecha && (!FILTRO_TAREA || t.categoria === FILTRO_TAREA));
+  const hechas = tareas.filter((t) => t.hecha);
+  const fila = (t) => `<li class="tarea ${t.hecha ? "hecha" : ""} ${!t.hecha && t.fecha_limite && t.fecha_limite < hoy ? "vencida" : ""}">
+      <input type="checkbox" data-tarea-hecha="${t.id}" ${t.hecha ? "checked" : ""} title="${t.hecha ? "Marcar como pendiente" : "Marcar como hecha"}">
+      <div class="tarea-texto">${esc(t.texto)}
+        <div class="tarea-meta"><span class="cat ${t.categoria}">${esc(cats[t.categoria] || t.categoria)}</span>
+          ${t.alumno ? `<span class="muted">👧 ${esc(t.alumno)}</span>` : ""}
+          ${t.fecha_limite ? `<span class="fecha-limite">📅 ${t.fecha_limite === hoy ? "hoy" : fechaCorta(t.fecha_limite)}${!t.hecha && t.fecha_limite < hoy ? " · vencida" : ""}</span>` : ""}</div></div>
+      <button class="icono" data-tarea-borrar="${t.id}" title="Borrar tarea">✕</button></li>`;
+  caja.innerHTML = `<h2>Tareas pendientes</h2>
+    <div class="nueva-tarea">
+      <div class="fila" style="gap:6px"><input id="t-texto" placeholder="Nueva tarea: preparar material, pasar prueba, enviar correo…" style="flex:1">${botonMicro("t-texto")}</div>
+      <div class="fila" style="gap:6px;flex-wrap:wrap;margin-top:6px">
+        <select id="t-cat">${Object.entries(cats).map(([k, t]) => `<option value="${k}" ${k === FILTRO_TAREA ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
+        <select id="t-alumno"><option value="">Sin alumno</option>${alumnos.map((al) => `<option value="${al.id}">${esc(al.nombre)}</option>`).join("")}</select>
+        <input type="date" id="t-fecha" title="Fecha límite (opcional)">
+        <button class="primario" id="t-anadir">＋ Añadir</button></div></div>
+    <div class="filtros"><button class="mini ${FILTRO_TAREA ? "" : "activo"}" data-filtro="">Todas</button>
+      ${Object.entries(cats).map(([k, t]) => `<button class="mini cat ${k} ${FILTRO_TAREA === k ? "activo" : ""}" data-filtro="${k}">${esc(t)}</button>`).join("")}</div>
+    ${pendientes.length ? `<ul class="lista-tareas">${pendientes.map(fila).join("")}</ul>`
+      : `<div class="vacio" style="padding:16px">${FILTRO_TAREA ? "No hay tareas pendientes de esta categoría." : "¡Nada pendiente! 🎉"}</div>`}
+    ${hechas.length ? `<details class="hechas"><summary>Hechas (${hechas.length})</summary>
+      <ul class="lista-tareas">${hechas.map(fila).join("")}</ul>
+      <button class="mini peligro" id="borrar-hechas">Borrar las hechas</button></details>` : ""}`;
+  enlazarMicros(caja);
+  const recargar = async () => pintarTareas(await api("GET", "/api/tareas"), alumnos);
+  const anadir = () => intentar(async () => {
+    const texto = $("#t-texto").value.trim();
+    if (!texto) { $("#t-texto").focus(); return; }
+    await api("POST", "/api/tareas", { texto, categoria: $("#t-cat").value, alumno_id: $("#t-alumno").value || null,
+      fecha_limite: $("#t-fecha").value || null });
+    await recargar();
+    $("#t-texto").focus();
+  });
+  $("#t-anadir").onclick = anadir;
+  $("#t-texto").onkeydown = (e) => { if (e.key === "Enter") anadir(); };
+  $$("[data-filtro]", caja).forEach((b) => b.onclick = () => { FILTRO_TAREA = b.dataset.filtro; recargar(); });
+  $$("[data-tarea-hecha]", caja).forEach((c) => c.onchange = () => intentar(async () => {
+    await api("PATCH", `/api/tareas/${c.dataset.tareaHecha}`, { hecha: c.checked });
+    if (c.checked) aviso("¡Tarea hecha! ✔");
+    await recargar();
+    pintarAvisos($("#avisos-trabajo"), false);
+  }));
+  $$("[data-tarea-borrar]", caja).forEach((b) => b.onclick = () => intentar(async () => {
+    if (!confirm("¿Borrar esta tarea?")) return;
+    await api("DELETE", `/api/tareas/${b.dataset.tareaBorrar}`);
+    await recargar();
+  }));
+  const bh = $("#borrar-hechas");
+  if (bh) bh.onclick = () => intentar(async () => {
+    if (!confirm(`¿Borrar las ${hechas.length} tareas hechas? No se puede deshacer.`)) return;
+    await api("POST", "/api/tareas/borrar-hechas");
+    await recargar();
+  });
+}
+
+async function dialogoCita(c, alumnos, alGuardar) {
+  await infoTrabajo();
+  const nueva = !c.id;
+  const v = { hora_inicio: "", hora_fin: "", tipo: "tutoria_familia", alumno_id: "", con_quien: "", lugar: "", notas: "", hecha: 0, ...c };
+  dialogo.innerHTML = `
+    <div class="dlg-cab"><h2>${nueva ? "Nueva cita" : "Cita"}</h2><button id="cerrar">Cerrar</button></div>
+    <div class="dlg-cuerpo"><div class="campos">
+      <div><label>Fecha</label><input type="date" id="c-fecha" value="${esc(v.fecha)}"></div>
+      <div><label>Tipo</label><select id="c-tipo">${Object.entries(TRABAJO.tipos_cita).map(([k, t]) => `<option value="${k}" ${k === v.tipo ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></div>
+      <div><label>Hora de inicio</label><input type="time" id="c-ini" value="${esc(v.hora_inicio)}"></div>
+      <div><label>Hora de fin (opcional)</label><input type="time" id="c-fin" value="${esc(v.hora_fin || "")}"></div>
+      <div><label>Alumno (opcional)</label><select id="c-alumno"><option value="">Sin alumno</option>
+        ${alumnos.map((al) => `<option value="${al.id}" ${String(al.id) === String(v.alumno_id) ? "selected" : ""}>${esc(al.nombre)}</option>`).join("")}</select></div>
+      <div><label>Con quién</label><input id="c-quien" value="${esc(v.con_quien)}" placeholder="Madre y padre, logopeda, psicóloga…"></div>
+      <div class="campo-ancho"><label>Lugar</label><input id="c-lugar" value="${esc(v.lugar)}" placeholder="Aula de PT, videollamada…"></div>
+      <div class="campo-ancho"><label>Notas</label><div class="fila" style="gap:6px;align-items:flex-start">
+        <textarea id="c-notas" rows="3" style="flex:1" placeholder="Temas a tratar, acuerdos…">${esc(v.notas)}</textarea>${botonMicro("c-notas")}</div></div>
+      ${nueva ? "" : `<div class="campo-ancho"><label class="fila" style="gap:6px"><input type="checkbox" id="c-hecha" ${v.hecha ? "checked" : ""}> Ya se ha hecho</label></div>`}
+    </div></div>
+    <div class="dlg-pie">${nueva ? "" : `<button class="peligro" id="c-borrar">Borrar</button>`}
+      <button id="c-cancelar">Cancelar</button><button class="primario" id="c-guardar">Guardar</button></div>`;
+  dialogo.showModal();
+  enlazarMicros(dialogo);
+  const cerrar = async () => { await pararMicro(); dialogo.close(); };
+  $("#cerrar").onclick = cerrar;
+  $("#c-cancelar").onclick = cerrar;
+  dialogo.oncancel = (e) => { e.preventDefault(); cerrar(); };
+  $("#c-guardar").onclick = () => intentar(async () => {
+    const datos = { fecha: $("#c-fecha").value, tipo: $("#c-tipo").value, hora_inicio: $("#c-ini").value,
+      hora_fin: $("#c-fin").value, alumno_id: $("#c-alumno").value || null, con_quien: $("#c-quien").value,
+      lugar: $("#c-lugar").value, notas: $("#c-notas").value };
+    if (!nueva) datos.hecha = $("#c-hecha").checked;
+    if (nueva) await api("POST", "/api/citas", datos); else await api("PATCH", `/api/citas/${v.id}`, datos);
+    await cerrar();
+    aviso(nueva ? "Cita guardada" : "Cita actualizada");
+    alGuardar && alGuardar();
+  });
+  if (!nueva) $("#c-borrar").onclick = () => intentar(async () => {
+    if (!confirm("¿Borrar esta cita?")) return;
+    await api("DELETE", `/api/citas/${v.id}`);
+    await cerrar();
+    alGuardar && alGuardar();
+  });
+}
+
+// Aviso de citas de hoy y mañana y de tareas vencidas (en Mi trabajo y en la agenda de sesiones)
+async function pintarAvisos(caja, conEnlace = true) {
+  if (!caja) return;
+  const av = await api("GET", "/api/avisos").catch(() => null);
+  if (!av || !caja.isConnected) return;
+  await infoTrabajo();
+  const items = [
+    ...av.citas.map((c) => `<li>${c.fecha === av.hoy ? "<strong>Hoy</strong>" : "Mañana"}${c.hora_inicio ? " a las " + c.hora_inicio : ""}:
+      ${esc(TRABAJO.tipos_cita[c.tipo])}${c.alumno ? " · " + esc(c.alumno) : ""}${c.con_quien ? " · " + esc(c.con_quien) : ""}</li>`),
+    ...av.tareas_vencidas.map((t) => `<li class="vencida">Tarea ${t.fecha_limite === av.hoy ? "para hoy" : "vencida (" + fechaCorta(t.fecha_limite) + ")"}: ${esc(t.texto)}</li>`)];
+  caja.innerHTML = items.length ? `<div class="aviso-trabajo">🔔 <ul>${items.join("")}</ul>
+    ${conEnlace ? `<a href="#/trabajo">Ver mi trabajo PT/AL</a>` : ""}</div>` : "";
 }
 
 // ======================================================================= ajustes

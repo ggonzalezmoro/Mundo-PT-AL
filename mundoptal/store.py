@@ -30,6 +30,8 @@ CAMPOS_EDITABLES = {
     "informes": {"curso", "maestra", "prof_area", "social", "actitud_pt", "actitud_al", "valoracion",
                  "orientaciones", "estrategias", "despedida"},
     "informe_areas": {"area", "texto", "orden"},
+    "tareas": {"texto", "categoria", "alumno_id", "fecha_limite", "hecha", "orden"},
+    "citas": {"fecha", "hora_inicio", "hora_fin", "tipo", "alumno_id", "con_quien", "lugar", "notas", "hecha"},
 }
 
 ADAPTACIONES_POR_DEFECTO = [
@@ -186,6 +188,8 @@ class Store:
             al["informes"] = self.q(
                 """SELECT id, trimestre, curso_escolar, actualizado FROM informes WHERE alumno_id = ?
                    ORDER BY curso_escolar DESC, trimestre DESC""", (alumno_id,))
+            al["citas"] = self.q("SELECT * FROM citas WHERE alumno_id = ? ORDER BY fecha DESC, hora_inicio DESC",
+                                 (alumno_id,))
         return al
 
     # ------------------------------------------------------------ edición genérica
@@ -194,6 +198,9 @@ class Store:
         if not permitidos:
             raise StoreError(f"Tabla no editable: {tabla}")
         cambios = {k: v for k, v in (cambios or {}).items() if k in permitidos}
+        if tabla in ("tareas", "citas"):
+            from . import trabajo
+            cambios = trabajo.validar(tabla, cambios)
         for k in ("eval_1t", "eval_2t", "eval_3t"):
             if k in cambios and cambios[k] not in ("", *ESCALA):
                 raise StoreError(f"Valor de evaluación no válido: {cambios[k]}")
@@ -205,6 +212,9 @@ class Store:
             self._tocar_aci(self.aci_de(tabla, id_))
             if tabla == "informes":
                 self.conn.execute("UPDATE informes SET actualizado = CURRENT_TIMESTAMP WHERE id = ?", (id_,))
+            elif tabla == "tareas" and "hecha" in cambios:
+                self.conn.execute("UPDATE tareas SET hecha_en = CASE WHEN hecha = 1 THEN CURRENT_TIMESTAMP END "
+                                  "WHERE id = ?", (id_,))
             elif tabla == "informe_areas":
                 self.conn.execute("""UPDATE informes SET actualizado = CURRENT_TIMESTAMP
                                      WHERE id = (SELECT informe_id FROM informe_areas WHERE id = ?)""", (id_,))
