@@ -423,3 +423,6 @@ button.sugerencia { background: var(--amarillo); border-color: #f0d98a; }
 .formato { font-size: 10px; font-weight: 800; padding: 3px 5px; border-radius: 4px; color: #fff; }
 .formato.docx { background: #2b579a; }
 .formato.pptx { background: #c43e1c; }
+.nota-amable { margin: 12px 0 0; padding: 8px 12px; border-radius: 8px; background: #f4f7f1; color: var(--texto-2); font-size: 13px; }
+details.avanzadas > summary { cursor: pointer; color: var(--texto-2); font-size: 13px; font-weight: 600; }
+details.tarjeta.avanzadas:not([open]) { padding-top: 10px; padding-bottom: 10px; }

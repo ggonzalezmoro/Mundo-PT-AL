@@ -1431,28 +1431,28 @@ async function vistaMaterial() {
       <p class="sub">Fichas en Word para imprimir o diapositivas en PowerPoint, con el logo del colegio y pictogramas de ARASAAC.</p></div></div>
     <div class="material-grid">
       <div>
-        <div class="tarjeta tarjeta-ia"><h2>✨ Pídeselo a Claude</h2>
-          <p class="nota-privacidad">🔒 Para crear el material se envía tu petición a Claude por Internet. No se envían nombres ni datos de tus alumnos.</p>
-          ${info.clave ? "" : `<div class="aviso-trabajo">Para usar Claude añade tu clave en <a href="#/ajustes">Ajustes › Crear material con Claude</a>. Mientras tanto, puedes usar las plantillas de abajo, que funcionan sin Internet.</div>`}
-          <label>¿Qué material quieres?</label>
-          <div class="fila" style="gap:6px;align-items:flex-start"><textarea id="ia-peticion" rows="3" style="flex:1"
-            placeholder="Por ejemplo: «fichas para trabajar las vocales con animales» o «un cuento corto para trabajar la rutina de lavarse las manos»"></textarea>${botonMicro("ia-peticion")}</div>
-          ${comunes("ia")}
-          <div id="sugerencias-ia" class="sugerencias"></div>
-          <p style="margin:10px 0 0"><button class="primario" id="ia-preparar" ${info.clave ? "" : "disabled"}>✨ Preparar propuesta</button>
-            <span class="muted" id="ia-estado"></span></p></div>
-        <div class="tarjeta"><h2>📋 Con plantillas (sin Internet)</h2>
+        <div class="tarjeta"><h2>📋 Plantillas (gratis y sin Internet)</h2>
           <div class="campos material-campos">
             <div><label>Tipo de material</label><select id="pl-tipo">${tipos.map(([k, t]) => `<option value="${k}">${esc(t.nombre)}</option>`).join("")}</select></div>
             <div class="campo-ancho"><label>Contenido</label><input id="pl-contenido" placeholder="${esc(tipos[0][1].ejemplo)}">
               <p class="muted" id="pl-ayuda" style="margin:3px 0 0;font-size:12px">${esc(tipos[0][1].ayuda)}</p></div></div>
           ${comunes("pl")}
           <div id="sugerencias-pl" class="sugerencias"></div>
-          <p style="margin:10px 0 0"><button class="primario" id="pl-preparar">👀 Ver propuesta</button></p></div>
+          <p style="margin:10px 0 0"><button class="primario" id="pl-preparar">👀 Ver propuesta</button></p>
+          <p class="nota-amable">💬 ¿Necesitas algo que no está aquí? Pídeselo a Claude en el chat de Mundo PT-AL y te lo dejará en Documentos › Mundo PT-AL › Material.</p></div>
+        ${info.clave ? `<details class="tarjeta tarjeta-ia avanzadas"><summary>Opciones avanzadas</summary><h2>✨ Pídeselo a Claude</h2>
+          <p class="nota-privacidad">🔒 Para crear el material se envía tu petición a Claude por Internet. No se envían nombres ni datos de tus alumnos.</p>
+          <label>¿Qué material quieres?</label>
+          <div class="fila" style="gap:6px;align-items:flex-start"><textarea id="ia-peticion" rows="3" style="flex:1"
+            placeholder="Por ejemplo: «fichas para trabajar las vocales con animales» o «un cuento corto para trabajar la rutina de lavarse las manos»"></textarea>${botonMicro("ia-peticion")}</div>
+          ${comunes("ia")}
+          <div id="sugerencias-ia" class="sugerencias"></div>
+          <p style="margin:10px 0 0"><button class="primario" id="ia-preparar">✨ Preparar propuesta</button>
+            <span class="muted" id="ia-estado"></span></p></details>` : ""}
       </div>
       <div>
         <div class="tarjeta" id="tarjeta-propuesta"><h2>Vista previa</h2>
-          <div class="vacio">Prepara una propuesta con Claude o con una plantilla y aquí verás sus páginas antes de crear el archivo.</div></div>
+          <div class="vacio">Elige una plantilla y pulsa «Ver propuesta»: aquí verás sus páginas antes de crear el archivo.</div></div>
         <div class="tarjeta"><h2>Material creado</h2>
           ${lista.length ? `<ul class="lista-material">${lista.map((m) => `<li>
               <span class="formato ${m.formato}">${m.formato === "pptx" ? "PPT" : "DOC"}</span>
@@ -1472,7 +1472,7 @@ async function vistaMaterial() {
     $("#pl-contenido").placeholder = t.ejemplo;
     $("#pl-ayuda").textContent = t.ayuda;
   };
-  for (const p of ["ia", "pl"]) {
+  for (const p of info.clave ? ["pl", "ia"] : ["pl"]) {
     $(`#${p}-alumno`).onchange = async () => {
       const caja = $(`#sugerencias-${p}`);
       const id = $(`#${p}-alumno`).value;
@@ -1493,7 +1493,7 @@ async function vistaMaterial() {
     PROPUESTA = { ...r, tipo: $("#pl-tipo").value, ...d };
     pintarPropuesta();
   });
-  $("#ia-preparar").onclick = () => intentar(async () => {
+  if (info.clave) $("#ia-preparar").onclick = () => intentar(async () => {
     const b = $("#ia-preparar");
     b.disabled = true;
     $("#ia-estado").textContent = " Claude está preparando el material… (puede tardar un minuto)";
@@ -1554,8 +1554,17 @@ async function pintarAjustesMaterial() {
   if (!USUARIO) { caja.innerHTML = "<h2>Crear material con Claude</h2><p class='muted'>Elige primero tu perfil.</p>"; return; }
   const info = await api("GET", "/api/material/info").catch(() => null);
   if (!info || !caja.isConnected) return;
-  caja.innerHTML = `<h2>Crear material con Claude</h2>
-    <p class="nota-privacidad">🔒 Solo el apartado «Crear material» usa Internet: se envía tu petición a Claude, sin nombres ni datos de tus alumnos. Lo demás sigue sin salir del ordenador.</p>
+  caja.innerHTML = `<h2>Crear material</h2>
+    <h3 style="margin:0 0 6px">Cómo salen las fichas</h3>
+    <label class="fila" style="gap:6px"><input type="checkbox" id="pictos-arasaac" ${info.pictos ? "checked" : ""} style="width:auto"> Usar pictogramas de ARASAAC (gratis; se descargan de Internet la primera vez y se guardan en Documentos › Mundo PT-AL › Pictogramas)</label>
+    <div class="campos" style="margin-top:10px"><div class="campo-ancho"><label>Texto de la cabecera</label>
+      <input id="cabecera-fichas" value="${esc(info.cabecera)}" placeholder="Tu nombre"></div></div>
+    <p class="muted" style="font-size:12px;margin:3px 0 10px">Sale arriba a la derecha en cada ficha, seguido de «PT/AL».</p>
+    <p>Logo de las fichas: ${info.logo_propio ? "<strong>tu logo</strong>" : "logo del colegio"}
+      <label class="boton" for="logo-fichas">🖼 Cambiar logo</label><input type="file" id="logo-fichas" accept=".png,.jpg,.jpeg" hidden>
+      ${info.logo_propio ? '<button id="logo-original">Volver al logo del colegio</button>' : ""}</p>
+    <details class="avanzadas" ${info.clave ? "open" : ""}><summary>Opciones avanzadas</summary>
+    <p class="nota-privacidad">Opcional y de pago: crear material con Claude por Internet. Se envía solo tu petición, sin nombres ni datos de tus alumnos. Sin clave, la aplicación no se conecta a Claude ni cobra nada.</p>
     <p>Clave de Claude: ${info.clave ? "<strong>✅ configurada</strong> (guardada en el Administrador de credenciales de Windows)" : "<strong>sin configurar</strong>"}</p>
     <div class="fila" style="gap:6px;flex-wrap:wrap"><input type="password" id="clave-claude" placeholder="Pega aquí tu clave (sk-ant-…)" style="flex:1;min-width:240px" autocomplete="off">
       <button class="primario" id="guardar-clave">Guardar</button><button id="probar-clave" ${info.clave ? "" : "disabled"}>Probar</button>
@@ -1565,15 +1574,7 @@ async function pintarAjustesMaterial() {
       <li>En <strong>Billing</strong>, añade saldo (por ejemplo 5 €; cada material cuesta unos céntimos).</li>
       <li>En <strong>API Keys › Create Key</strong>, crea una clave, cópiala y pégala aquí.</li></ol>
       <p class="muted">La clave no se guarda en la base de datos de la aplicación ni se comparte: queda en el Administrador de credenciales de Windows de este ordenador.</p></details>
-    <hr style="border:none;border-top:1px solid var(--borde);margin:14px 0">
-    <h3 style="margin:0 0 6px">Cómo salen las fichas</h3>
-    <label class="fila" style="gap:6px"><input type="checkbox" id="pictos-arasaac" ${info.pictos ? "checked" : ""} style="width:auto"> Usar pictogramas de ARASAAC (se descargan de Internet la primera vez y se guardan en Documentos › Mundo PT-AL › Pictogramas)</label>
-    <div class="campos" style="margin-top:10px"><div class="campo-ancho"><label>Texto de la cabecera</label>
-      <input id="cabecera-fichas" value="${esc(info.cabecera)}" placeholder="Tu nombre"></div></div>
-    <p class="muted" style="font-size:12px;margin:3px 0 10px">Sale arriba a la derecha en cada ficha, seguido de «PT/AL».</p>
-    <p>Logo de las fichas: ${info.logo_propio ? "<strong>tu logo</strong>" : "logo del colegio"}
-      <label class="boton" for="logo-fichas">🖼 Cambiar logo</label><input type="file" id="logo-fichas" accept=".png,.jpg,.jpeg" hidden>
-      ${info.logo_propio ? '<button id="logo-original">Volver al logo del colegio</button>' : ""}</p>`;
+    </details>`;
   const recargar = () => pintarAjustesMaterial();
   $("#guardar-clave").onclick = () => intentar(async () => {
     const clave = $("#clave-claude").value.trim();
@@ -1630,7 +1631,7 @@ async function vistaAjustes() {
       ${voz.disponible ? `<p>✅ Dictado sin conexión disponible (el audio no sale del ordenador).</p>`
         : `<p>⚠️ ${esc(voz.motivo)}</p><p class="muted">Mientras tanto puedes usar el dictado de Windows: haz clic en el cuadro de texto y pulsa <strong>Windows + H</strong>.</p>`}
     </div>
-    <div class="tarjeta" id="ajustes-material"><h2>Crear material con Claude</h2><p class="muted">Cargando…</p></div>`;
+    <div class="tarjeta" id="ajustes-material"><h2>Crear material</h2><p class="muted">Cargando…</p></div>`;
   pintarAjustesMaterial();
   $("#copia").onclick = () => intentar(async () => { const r = await api("POST", "/api/copia-seguridad"); aviso("Copia guardada en " + r.ruta); });
   $("#buscar-act").onclick = () => buscarActualizacion(true);

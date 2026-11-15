@@ -45,7 +45,11 @@ def obtener(palabra: str, carpeta: Path, descargar: bool = True) -> Path | None:
             resultados = json.loads(r.read().decode("utf-8"))
         if not resultados:
             raise LookupError(palabra)
-        pid = int(resultados[0]["_id"])
+        # Mejor el pictograma cuya palabra clave coincide exactamente («lengua», no «lengua de gato»)
+        buscada = sin_tildes(palabra.lower()).strip()
+        exacto = next((x for x in resultados if any(sin_tildes((k.get("keyword") or "").lower()).strip() == buscada
+                                                     for k in x.get("keywords", []))), None)
+        pid = int((exacto or resultados[0])["_id"])
         with urllib.request.urlopen(URL_IMAGEN.format(id=pid), timeout=TIEMPO) as r:
             datos = r.read()
         if not datos.startswith(b"\x89PNG"):

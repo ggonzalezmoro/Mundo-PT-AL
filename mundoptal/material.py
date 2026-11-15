@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 Actividad = Literal["letra", "repasar", "rodear", "unir", "completar", "contar", "clasificar",
-                    "secuencia", "tarjetas", "pregunta", "cuento"]
+                    "secuencia", "tarjetas", "pregunta", "cuento", "frase"]
 
 ACTIVIDADES = {
     "letra": "Letra o número grande para presentar (y hueco para repasar)",
@@ -28,7 +28,8 @@ ACTIVIDADES = {
     "secuencia": "Ordenar los pasos de una secuencia",
     "tarjetas": "Tarjetas de vocabulario con imagen y palabra",
     "pregunta": "Pregunta con opciones para rodear la respuesta",
-    "cuento": "Cuento o frases cortas con pictogramas",
+    "cuento": "Cuento o frases cortas con un pictograma por frase",
+    "frase": "Frases con el pictograma encima de cada palabra clave (cada palabra es un elemento; «grupo» = nº de frase)",
 }
 
 
@@ -156,6 +157,16 @@ TIPOS = {
     "emociones": {"nombre": "Emociones básicas", "ejemplo": "alegre triste enfadado asustado", "ayuda": "Emociones que quieres trabajar."},
     "vocabulario": {"nombre": "Tarjetas de vocabulario", "ejemplo": "animales",
                     "ayuda": "Campo semántico (comida, colegio, casa, ropa, transporte, animales, cuerpo) o palabras sueltas."},
+    "rutinas": {"nombre": "Secuencias de rutinas", "ejemplo": "lavarse las manos",
+                "ayuda": "Rutina: lavarse las manos, vestirse, ir al baño o merienda (vacío = todas)."},
+    "praxias": {"nombre": "Praxias bucofaciales", "ejemplo": "",
+                "ayuda": "Vacío = todas (soplar, sacar la lengua, inflar mofletes, sonreír, beso…), o escribe las que quieras."},
+    "fonologia": {"nombre": "Conciencia fonológica", "ejemplo": "sílabas rimas sonido inicial",
+                  "ayuda": "Qué trabajar: sílabas (palmadas), rimas, sonido inicial. Vacío = todo."},
+    "auditiva": {"nombre": "Discriminación auditiva", "ejemplo": "animales",
+                 "ayuda": "Sonidos de: animales, objetos o transporte. Vacío = todos."},
+    "cuento": {"nombre": "Cuento con pictogramas", "ejemplo": "El perro come una manzana. La niña juega con la pelota.",
+               "ayuda": "Escribe el cuento: cada palabra importante saldrá con su pictograma encima."},
 }
 NIVELES = {"3": {"rejilla": 6, "opciones": 3, "max_num": 3}, "4": {"rejilla": 9, "opciones": 4, "max_num": 5},
            "5": {"rejilla": 12, "opciones": 5, "max_num": 10}}
@@ -226,6 +237,8 @@ def _titulo(tipo, contenido):
         return f"Números del {n[0]} al {n[-1]}" if len(n) > 1 else f"El número {n[0]}"
     if tipo == "vocabulario":
         return "Vocabulario: " + ((contenido or "animales").strip().lower())
+    if tipo == "rutinas" and _elegir(RUTINAS, contenido) != list(RUTINAS):
+        return "Rutina: " + ", ".join(_elegir(RUTINAS, contenido))
     return TIPOS[tipo]["nombre"]
 
 
@@ -238,6 +251,11 @@ def _objetivo(tipo, contenido):
         "espaciales": "Comprender conceptos espaciales básicos.",
         "emociones": "Reconocer y nombrar emociones básicas.",
         "vocabulario": "Ampliar el vocabulario de un campo semántico.",
+        "rutinas": "Anticipar y ordenar los pasos de las rutinas diarias.",
+        "praxias": "Mejorar la movilidad y el control de labios, lengua y mejillas.",
+        "fonologia": "Desarrollar la conciencia fonológica: sílabas, rimas y sonido inicial.",
+        "auditiva": "Discriminar sonidos del entorno y asociarlos a su imagen.",
+        "cuento": "Comprender un cuento corto apoyado en pictogramas.",
     }[tipo]
 
 
@@ -362,12 +380,169 @@ def _plantilla_vocabulario(contenido, cfg, rnd):
     return paginas
 
 
+RUTINAS = {
+    "lavarse las manos": [("Abro el grifo", "abrir el grifo"), ("Me mojo las manos", "mojar"), ("Me echo jabón", "jabón"),
+                          ("Froto las manos", "enjabonar"), ("Me aclaro", "aclarar"), ("Me seco las manos", "secar las manos")],
+    "vestirse": [("Me pongo la camiseta", "camiseta"), ("Me pongo el pantalón", "pantalón"),
+                 ("Me pongo los calcetines", "calcetines"), ("Me pongo los zapatos", "zapatos"), ("Me pongo el abrigo", "abrigo")],
+    "ir al baño": [("Voy al baño", "váter"), ("Me bajo el pantalón", "pantalón"), ("Me siento", "sentar"),
+                   ("Me limpio", "papel higiénico"), ("Tiro de la cadena", "tirar de la cadena"), ("Me lavo las manos", "lavar las manos")],
+    "merienda": [("Me lavo las manos", "lavar las manos"), ("Saco la merienda", "mochila"), ("Me siento a comer", "comer"),
+                 ("Recojo", "recoger"), ("Tiro el papel a la papelera", "papelera")],
+}
+PRAXIAS = [("Sopla", "soplar"), ("Saca la lengua", "lengua"), ("Infla los mofletes", "hinchar"),
+           ("Sonríe", "sonreír"), ("Manda un beso", "beso"), ("Abre mucho la boca", "boca"),
+           ("Toca la nariz con la lengua", "nariz"), ("Chupa los labios", "labios")]
+SILABAS_FONO = [("sol", 1), ("pan", 1), ("casa", 2), ("pato", 2), ("mesa", 2), ("pelota", 3), ("zapato", 3),
+                ("mariposa", 4), ("elefante", 4)]
+RIMAS = [("gato", "pato", ["sol", "mesa"]), ("ratón", "jamón", ["pera", "luna"]), ("mesa", "fresa", ["coche", "pez"]),
+         ("león", "camión", ["casa", "flor"]), ("luna", "cuna", ["tren", "oso"])]
+SONIDOS = {
+    "animales": [("PERRO", "perro", "guau"), ("GATO", "gato", "miau"), ("VACA", "vaca", "muu"), ("OVEJA", "oveja", "bee"),
+                 ("PATO", "pato", "cuac"), ("GALLO", "gallo", "quiquiriquí")],
+    "objetos": [("TELÉFONO", "teléfono", ""), ("RELOJ", "reloj", ""), ("CAMPANA", "campana", ""), ("TAMBOR", "tambor", ""),
+                ("TIMBRE", "timbre", ""), ("SECADOR", "secador", "")],
+    "transporte": [("COCHE", "coche", ""), ("TREN", "tren", ""), ("AMBULANCIA", "ambulancia", ""), ("AVIÓN", "avión", ""),
+                   ("MOTO", "moto", ""), ("BARCO", "barco", "")],
+}
+PALABRAS_VACIAS = set("""el la los las un una unos unas y o de del al a en con por para que se su sus mi mis tu tus es son
+está están muy más pero como le les lo me te nos ya no si sí ha han hay era fue este esta ese esa""".split())
+
+
+def _elegir(opciones: dict, contenido: str) -> list[str]:
+    """Opciones cuyo nombre aparece en el texto (por sus palabras de 4 letras o más)."""
+    palabras = re.findall(r"\w+", sin_tildes((contenido or "").lower()))
+    elegidas = [k for k in opciones
+                if any(len(p) >= 4 and any(w.startswith(p[:5]) for w in palabras) for p in sin_tildes(k).split())]
+    return elegidas or list(opciones)
+
+
+def _plantilla_rutinas(contenido, cfg, rnd):
+    paginas = []
+    for nombre in _elegir(RUTINAS, contenido):
+        pasos = RUTINAS[nombre]
+        paginas.append(pag("cuento", f"Así nos {nombre.replace('lavarse', 'lavamos').replace('vestirse', 'vestimos')}"
+                           if nombre in ("lavarse las manos", "vestirse") else f"Rutina: {nombre}",
+                           elementos=[el(f"{i}. {t}", p) for i, (t, p) in enumerate(pasos, 1)]))
+        paginas.append(pag("secuencia", "Recorta los dibujos y ordénalos", elementos=[el(t, p) for t, p in pasos]))
+    return paginas
+
+
+def _plantilla_praxias(contenido, cfg, rnd):
+    t = sin_tildes((contenido or "").lower())
+    elegidas = [p for p in PRAXIAS if sin_tildes(p[0].lower().split()[-1])[:5] in t or sin_tildes(p[1])[:5] in t] or PRAXIAS
+    paginas = [pag("tarjetas", "Mírate en el espejo y hazlo como en el dibujo", elementos=[el(x.upper(), p) for x, p in elegidas[i:i + 4]])
+               for i in range(0, len(elegidas), 4)]
+    paginas.append(pag("cuento", "Hazlo tres veces y colorea un cuadrado cada vez",
+                       elementos=[el(f"{x}      ☐ ☐ ☐", p) for x, p in elegidas[:6]]))
+    return paginas
+
+
+def _plantilla_fonologia(contenido, cfg, rnd):
+    t = sin_tildes((contenido or "").lower())
+    todo = not t
+    paginas = []
+    if todo or "silab" in t or "palmad" in t:
+        max_silabas = cfg["opciones"] - 1  # 3 años: hasta 2 sílabas; 4 años: 3; 5 años: 4
+        palabras = [w for w in SILABAS_FONO if w[1] <= max_silabas]
+        rnd.shuffle(palabras)
+        for i in range(0, min(len(palabras), 8), 4):
+            paginas.append(pag("cuento", "Da una palmada por sílaba y colorea un círculo por palmada",
+                               elementos=[el(f"{w.upper()}      ○ ○ ○ ○", w) for w, _ in palabras[i:i + 4]]))
+    if todo or "rima" in t:
+        for base, rima, otras in RIMAS[:cfg["opciones"]]:
+            opciones = [el(rima.upper(), rima, correcto=True)] + [el(o.upper(), o) for o in otras]
+            rnd.shuffle(opciones)
+            paginas.append(pag("pregunta", f"¿Qué palabra rima con {base.upper()}? Rodéala", base, opciones))
+    if todo or "inicial" in t or "sonido" in t:
+        for L in ("M", "P", "S"):
+            palabras = PALABRAS_LETRA[L]
+            otras = [p for k, v in PALABRAS_LETRA.items() if k not in (L,) and k in "AEIOUMPLST" for p in v[:1]]
+            opciones = [el(p.upper(), p, correcto=True) for p in palabras[:2]] + [el(p.upper(), p) for p in rnd.sample(otras, 3)]
+            rnd.shuffle(opciones)
+            paginas.append(pag("rodear", f"Rodea los dibujos que empiezan por el sonido /{L.lower()}/", L, opciones))
+    return paginas
+
+
+def _plantilla_auditiva(contenido, cfg, rnd):
+    paginas = []
+    for grupo in _elegir(SONIDOS, contenido):
+        lista = SONIDOS[grupo]
+        if grupo == "animales":
+            paginas.append(pag("tarjetas", "¿Cómo hacen los animales?", elementos=[el(f"{n} · {s.upper()}", p) for n, p, s in lista[:4]]))
+        for ronda in range(2):
+            muestra = rnd.sample(lista, min(len(lista), cfg["opciones"] + 1))
+            paginas.append(pag("rodear", "Escucha el sonido y rodea el dibujo que suena", elementos=[el(n, p) for n, p, _ in muestra]))
+    return paginas
+
+
+def frases_con_pictos(texto: str) -> list[list[Elemento]]:
+    """Divide un texto en frases y marca con pictograma las palabras importantes."""
+    frases = [f.strip() for f in re.split(r"(?<=[.!?¡¿])\s+|\n+", (texto or "").strip()) if f.strip()]
+    salida = []
+    for i, frase in enumerate(frases):
+        palabras = []
+        for w in frase.split():
+            limpia = re.sub(r"[^\wáéíóúüñÁÉÍÓÚÜÑ]", "", w)
+            clave = limpia.lower() if len(limpia) >= 3 and limpia.lower() not in PALABRAS_VACIAS else ""
+            palabras.append(el(w, clave, grupo=str(i)))
+        salida.append(palabras)
+    return salida
+
+
+def _plantilla_cuento(contenido, cfg, rnd):
+    frases = frases_con_pictos(contenido or TIPOS["cuento"]["ejemplo"])
+    paginas = []
+    for i in range(0, len(frases), 3):
+        elementos = [e for f in frases[i:i + 3] for e in f]
+        paginas.append(pag("frase", "Leemos el cuento" if i == 0 else "Seguimos leyendo", elementos=elementos))
+    return paginas
+
+
 # ------------------------------------------------------------------ sugerencias por la ACI
 SUGERENCIAS = [
     ("letras", "vocales", r"\bvocal"), ("silabas", "M P L", r"s[ií]laba"), ("letras", "", r"\bletra|grafema|fonema"),
     ("numeros", "1-5", r"n[uú]mero|cantidad|contar|cuenta"), ("espaciales", "", r"arriba|abajo|dentro|fuera|encima|debajo|grande|peque"),
     ("emociones", "", r"emoci|alegr|trist|enfad|asust|miedo"), ("emparejar", "", r"empareja|asocia|relaciona"),
+    ("rutinas", "", r"rutina|habito|higiene|lavado de manos|vestir|bano"), ("praxias", "", r"praxia|soplo|sopla|lengua|labio"),
+    ("fonologia", "", r"fonolog|rima|palmada|silaba"), ("auditiva", "", r"auditiv|sonido|escucha|onomatop"),
 ]
+
+
+# ------------------------------------------------------------------ línea de comandos
+def main(argv: list[str] | None = None) -> int:
+    """Crea un .docx o .pptx a partir de un MaterialSpec en JSON (sin usar la API):
+    python -m mundoptal.material --spec material.json --formato docx --salida ficha.docx"""
+    import argparse
+    import json
+    from pathlib import Path
+
+    from . import maqueta
+
+    ap = argparse.ArgumentParser(prog="python -m mundoptal.material", description=main.__doc__)
+    ap.add_argument("--spec", required=True, help="archivo JSON con el MaterialSpec")
+    ap.add_argument("--formato", choices=("docx", "pptx"), default="docx")
+    ap.add_argument("--salida", help="archivo de salida (por defecto, junto al JSON)")
+    ap.add_argument("--cabecera", default="", help="texto de la cabecera (nombre de la maestra)")
+    ap.add_argument("--alumno", default="", help="nombre del alumno en las fichas (solo Word)")
+    ap.add_argument("--logo", default=None, help="imagen PNG o JPG para la cabecera (por defecto, el logo del colegio)")
+    ap.add_argument("--pictos", default=str(Path.home() / "Documents" / "Mundo PT-AL" / "Pictogramas"),
+                    help="carpeta de pictogramas de ARASAAC (caché)")
+    ap.add_argument("--sin-pictos", action="store_true", help="no descargar pictogramas (emoji o hueco)")
+    a = ap.parse_args(argv)
+    spec = MaterialSpec.model_validate(json.loads(Path(a.spec).read_text(encoding="utf-8")))
+    rec = maqueta.Recursos(carpeta_pictos=None if a.sin_pictos else Path(a.pictos), descargar_pictos=not a.sin_pictos,
+                           logo=Path(a.logo) if a.logo else None, cabecera=a.cabecera, alumno=a.alumno)
+    datos = maqueta.a_word(spec, rec) if a.formato == "docx" else maqueta.a_powerpoint(spec, rec)
+    salida = Path(a.salida) if a.salida else Path(a.spec).with_suffix("." + a.formato)
+    salida.parent.mkdir(parents=True, exist_ok=True)
+    salida.write_bytes(datos)
+    print(f"{salida}  ({len(spec.paginas)} {'diapositivas' if a.formato == 'pptx' else 'fichas'})")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 def sugerencias(items_pendientes: list[dict]) -> list[dict]:

@@ -191,10 +191,43 @@ def _pagina_docx(doc, rec: Recursos, pg: Pagina, indice: int):
             p = doc.add_paragraph()
             _run(p, e.texto + "   ", tam=36, negrita=True)
             _run(p, e.texto, tam=36, color=GRIS_REPASO)
+    elif a == "frase":
+        for frase in _frases(els):
+            # Ancho de cada palabra según su longitud, y filas de hasta 17 cm (sin partir palabras)
+            ancho = lambda e: max(2.4 if e.pictograma else 1.4, len(e.texto) * 0.55 + 0.4)  # noqa: E731
+            trozos, actual, suma = [], [], 0.0
+            for e in frase:
+                if actual and suma + ancho(e) > 17.0:
+                    trozos.append(actual)
+                    actual, suma = [], 0.0
+                actual.append(e)
+                suma += ancho(e)
+            if actual:
+                trozos.append(actual)
+            for trozo in trozos:
+                t = _tabla(doc, 2, len(trozo), ancho_cm=sum(ancho(e) for e in trozo))
+                _sin_bordes(t)
+                for j, e in enumerate(trozo):
+                    for fila in t.rows:
+                        fila.cells[j].width = Cm(ancho(e))
+                    t.columns[j].width = Cm(ancho(e))
+                    p = _centro(t.cell(0, j).paragraphs[0])
+                    t.cell(0, j).vertical_alignment = WD_ALIGN_VERTICAL.BOTTOM
+                    tipo, valor = rec.imagen(e.pictograma) if e.pictograma else (None, None)
+                    if tipo == "img":
+                        p.add_run().add_picture(str(valor), height=Cm(2.2))
+                    elif tipo == "emoji":
+                        _run(p, valor, tam=48, fuente=EMOJI_FUENTE)
+                    _run(_centro(t.cell(1, j).paragraphs[0]), e.texto, tam=20, negrita=bool(e.pictograma))
+            doc.add_paragraph().paragraph_format.space_after = Pt(10)
     elif a in ("rodear", "pregunta"):
         if a == "pregunta" and any(e.grupo in ESPACIALES for e in els):
             _espaciales_docx(doc, rec, els)
         else:
+            if a == "pregunta" and pg.destacado:  # modelo (p. ej. la palabra con la que tiene que rimar)
+                p = _centro(doc.add_paragraph())
+                _poner_imagen(p, rec, pg.destacado, 3.2)
+                _run(_centro(doc.add_paragraph()), pg.destacado.upper(), tam=26, negrita=True, color=VERDE)
             cols = 3 if len(els) <= 9 else 4
             if a == "pregunta" and len(els) <= 4:
                 cols = len(els) or 1
@@ -288,6 +321,14 @@ def _pagina_docx(doc, rec: Recursos, pg: Pagina, indice: int):
 
 
 ESPACIALES = {"arriba", "abajo", "dentro", "fuera", "grande", "pequeño", "pequeno"}
+
+
+def _frases(els):
+    """Agrupa los elementos de una página «frase» por su número de frase (campo grupo)."""
+    frases: dict[str, list] = {}
+    for e in els:
+        frases.setdefault(e.grupo or "0", []).append(e)
+    return list(frases.values())
 
 
 def _espaciales_docx(doc, rec, els):
@@ -567,6 +608,26 @@ def a_powerpoint(spec: MaterialSpec, rec: Recursos) -> bytes:
             rejilla(s, _mezclar(els, i), y0=arriba + Inches(2.6), alto=abajo - arriba - Inches(2.6))
         elif a == "tarjetas":
             rejilla(s, els, cols=min(4, max(1, len(els))))
+        elif a == "frase":
+            frases = _frases(els)
+            alto_f = (abajo - arriba) // max(1, len(frases))
+            for k, frase in enumerate(frases):
+                y = arriba + k * alto_f
+                cw = (W - 2 * margen) // max(6, len(frase))
+                x0 = margen + ((W - 2 * margen) - cw * len(frase)) // 2
+                lado = min(cw - Inches(0.1), alto_f - Inches(0.6))
+                for j, e in enumerate(frase):
+                    x = x0 + j * cw
+                    if e.pictograma:
+                        tipo, valor = rec.imagen(e.pictograma)
+                        if tipo in ("img", "emoji"):
+                            imagen(s, e.pictograma, x + (cw - lado) // 2, y, lado, lado)
+                    texto(s, x, y + lado, cw, Inches(0.5), e.texto, tam=22, negrita=bool(e.pictograma))
+        elif a == "pregunta" and pg.destacado:
+            caja(s, margen, arriba, Inches(3.2), abajo - arriba, color=verde, grosor=2.5)
+            imagen(s, pg.destacado, margen + Inches(0.3), arriba + Inches(0.4), Inches(2.6), Inches(2.6))
+            texto(s, margen, arriba + Inches(3.1), Inches(3.2), Inches(0.8), pg.destacado.upper(), tam=28, negrita=True, color=verde)
+            rejilla(s, els, x0=margen + Inches(3.5), ancho=W - 2 * margen - Inches(3.5))
         else:  # rodear, pregunta, completar, secuencia, cuento
             if a == "secuencia":
                 els = _mezclar(els, i + 7)

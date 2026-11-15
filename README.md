@@ -78,6 +78,26 @@ Otras opciones: `python -m mundoptal --navegador` (abre en el navegador) y
 Cada `push` a `main` construye el ejecutable en GitHub Actions; al crear una
 etiqueta `v*` se publica como *Release*.
 
+### Crear material desde la línea de comandos
+
+El apartado «Crear material» describe cada material con un **MaterialSpec** en JSON
+(`mundoptal/material.py`): título, objetivo, instrucciones para la maestra y una lista
+de páginas, cada una con una actividad de la lista cerrada (`letra`, `repasar`,
+`rodear`, `unir`, `completar`, `contar`, `clasificar`, `secuencia`, `tarjetas`,
+`pregunta`, `cuento`, `frase`), un enunciado, un `destacado` y sus elementos
+(`texto`, `pictograma`, `pareja`, `correcto`, `grupo`, `cantidad`). Con ese JSON se
+genera el archivo con el mismo estilo que en la aplicación, sin usar ninguna API:
+
+```bat
+.venv\Scripts\python.exe -m mundoptal.material --spec material.json --formato docx ^
+    --salida "%USERPROFILE%\Documents\Mundo PT-AL\Material\ficha.docx" --cabecera "Nombre de la maestra"
+```
+
+Opciones: `--formato docx|pptx`, `--alumno` (nombre en la cabecera de las fichas),
+`--logo` (otra imagen), `--sin-pictos` (no descarga pictogramas de ARASAAC; usa emoji
+o un hueco). Para ver un ejemplo de JSON:
+`python -c "from mundoptal import material; print(material.plantilla('rutinas', 'vestirse').model_dump_json(indent=2))"`.
+
 ### Publicar una versión nueva (para el botón «Actualizar»)
 
 1. Sube `APP_VERSION` en `mundoptal/config.py` (por ejemplo `0.4.0` → `0.5.0`).

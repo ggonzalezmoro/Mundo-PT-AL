@@ -54,7 +54,9 @@ def _sin_red():
 @pytest.mark.parametrize("tipo,contenido", [
     ("letras", "vocales"), ("letras", "M P"), ("silabas", "M P L"), ("numeros", "1-5"), ("emparejar", "A E I"),
     ("emparejar", "1 2 3"), ("emparejar", "perro gato vaca"), ("espaciales", ""), ("emociones", ""),
-    ("vocabulario", "comida"), ("vocabulario", "pelota coche muñeca")])
+    ("vocabulario", "comida"), ("vocabulario", "pelota coche muñeca"), ("rutinas", ""), ("rutinas", "vestirse"),
+    ("praxias", ""), ("praxias", "soplar beso"), ("fonologia", ""), ("fonologia", "rimas"), ("auditiva", ""),
+    ("auditiva", "transporte"), ("cuento", "El perro come. La niña juega con la pelota en el parque grande.")])
 def test_cada_plantilla_genera_word_y_powerpoint_validos(tipo, contenido):
     spec = material.plantilla(tipo, contenido, "4", None, semilla=3)
     assert spec.paginas and all(p.enunciado for p in spec.paginas)
@@ -73,6 +75,35 @@ def test_numero_de_fichas_pedido():
         assert _paginas_docx(maqueta.a_word(spec, _sin_red())) == num
     # Con pocas fichas salen todas las vocales antes de repetir actividad
     assert [p.destacado for p in material.plantilla("letras", "vocales", "4", 5).paginas] == ["A a", "E e", "I i", "O o", "U u"]
+
+
+def test_plantillas_nuevas_contenido():
+    vestirse = material.plantilla("rutinas", "vestirse", "4")
+    assert [p.actividad for p in vestirse.paginas] == ["cuento", "secuencia"]
+    assert vestirse.paginas[1].elementos[0].texto == "Me pongo la camiseta"  # la secuencia se guarda en orden; se desordena al maquetar
+    praxias = material.plantilla("praxias", "soplar beso", "4")
+    assert {e.texto for e in praxias.paginas[0].elementos} == {"SOPLA", "MANDA UN BESO"}
+    fono = material.plantilla("fonologia", "", "3")
+    palmadas = [e for p in fono.paginas if p.actividad == "cuento" for e in p.elementos]
+    assert palmadas and all("○" in e.texto for e in palmadas)
+    assert all(len(e.pictograma) and e.pictograma not in ("mariposa", "elefante", "pelota", "zapato") for e in palmadas)  # 3 años: ≤2 sílabas
+    rimas = [p for p in fono.paginas if p.actividad == "pregunta"]
+    assert rimas and all(sum(e.correcto for e in p.elementos) == 1 for p in rimas)
+    auditiva = material.plantilla("auditiva", "animales", "4")
+    assert auditiva.paginas[0].elementos[0].texto == "PERRO · GUAU"
+    frases = material.frases_con_pictos("El perro come una manzana. ¡La niña juega!")
+    assert [[e.pictograma for e in f] for f in frases] == [["", "perro", "come", "", "manzana"], ["", "niña", "juega"]]
+
+
+def test_linea_de_comandos_crea_material_desde_json(tmp_path):
+    spec = material.plantilla("emociones", "", "4", 2)
+    origen = tmp_path / "material.json"
+    origen.write_text(spec.model_dump_json(), encoding="utf-8")
+    assert material.main(["--spec", str(origen), "--formato", "pptx", "--sin-pictos", "--cabecera", "Maestra Prueba"]) == 0
+    assert len(Presentation(str(tmp_path / "material.pptx")).slides) == 2
+    salida = tmp_path / "otra" / "fichas.docx"
+    assert material.main(["--spec", str(origen), "--salida", str(salida), "--sin-pictos"]) == 0
+    assert _paginas_docx(salida.read_bytes()) == 2
 
 
 def test_sugerencias_segun_la_aci():
