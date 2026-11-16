@@ -93,3 +93,56 @@ def configurar(ruta: Path | None = None) -> dict:
     temporal.write_text(json.dumps(datos, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(temporal, ruta)
     return {"ruta": str(ruta), "copia": str(copia) if copia else "", "entrada": datos["mcpServers"][ENTRADA]}
+
+
+# ---------------------------------------------------------------- pedir material desde la aplicación
+NIVELES_TEXTO = {"3": "3 años", "4": "4 años", "5": "5 años"}
+
+
+def peticion_material(peticion: str, nivel: str = "4", formato: str = "docx", num: int | None = None,
+                      objetivos: list[str] | None = None) -> str:
+    """Mensaje para Claude Desktop: lo que pide la maestra con todo el detalle y cómo crearlo con las
+    herramientas de Mundo PT-AL. Nunca lleva nombres de alumnos (se quitan antes)."""
+    lineas = [
+        "Crea este material con las herramientas de Mundo PT-AL (mundo-ptal):",
+        "",
+        (peticion or "").strip(),
+        "",
+        f"- Nivel: {NIVELES_TEXTO.get(str(nivel), '4 años')} (Educación Infantil, alumnado con necesidades educativas especiales).",
+        "- Formato: " + ("PowerPoint (diapositivas para proyectar)." if formato == "pptx" else "Word (fichas para imprimir)."),
+    ]
+    if num:
+        lineas.append(f"- Número de {'diapositivas' if formato == 'pptx' else 'fichas'}: {num}.")
+    if objetivos:
+        lineas += ["- Objetivos pendientes del alumno en su ACI (oriéntalo a ellos):"]
+        lineas += [f"  · {o}" for o in objetivos[:15]]
+    lineas += [
+        "",
+        "Llama a esquema_material, diseña el material con todo el detalle que haga falta y créalo con crear_material "
+        f"(formato \"{'pptx' if formato == 'pptx' else 'docx'}\") sin pedirme confirmación. "
+        "Al terminar, dime el título y cuántas páginas tiene: aparecerá solo en Mundo PT-AL › Crear material.",
+    ]
+    return "\n".join(lineas)
+
+
+def url_nuevo_chat(texto: str) -> str:
+    """Enlace que abre Claude Desktop con un chat nuevo y el mensaje ya escrito."""
+    from urllib.parse import quote
+    return "claude://claude.ai/new?q=" + quote(texto, safe="")
+
+
+def abrir_claude(texto: str) -> bool:
+    """Copia el mensaje al portapapeles (por si acaso) y abre Claude Desktop con él ya escrito."""
+    if os.name != "nt":
+        return False
+    import subprocess
+    try:
+        subprocess.run(["clip"], input=texto.encode("utf-16-le"), stdout=subprocess.DEVNULL,  # noqa: S603,S607
+                       stderr=subprocess.DEVNULL, check=False, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        os.startfile(url_nuevo_chat(texto))  # noqa: S606 - el protocolo claude:// lo registra Claude Desktop
+        return True
+    except OSError:
+        return False

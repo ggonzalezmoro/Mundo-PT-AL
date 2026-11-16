@@ -1,18 +1,13 @@
-"""Material en Google Drive: inicio de sesión, subida convertida y alternativa sin conexión.
-Nunca se llama a Google (HTTP falso), ni se abre el navegador, ni se usa el
-Administrador de credenciales real (keyring en memoria)."""
-import base64
-import json
+"""Material en Google Drive sin API (Drive para ordenadores o arrastrar) y petición a Claude Desktop.
+Nunca se abre el navegador, el Explorador ni Claude Desktop, ni se usa Internet."""
 import urllib.parse
 
 import keyring
 import pytest
 
-from mundoptal import google_drive
+from mundoptal import claude_desktop, google_drive
 from mundoptal.servidor import crear_app
 from tests.test_material import KeyringMemoria
-
-CLIENTE = json.dumps({"installed": {"client_id": "123-abc.apps.googleusercontent.com", "client_secret": "GOCSPX-prueba"}})
 
 
 @pytest.fixture(autouse=True)
@@ -20,55 +15,10 @@ def entorno(tmp_path, monkeypatch):
     anterior = keyring.get_keyring()
     keyring.set_keyring(KeyringMemoria())
     monkeypatch.setenv("MUNDOPTAL_DOCUMENTOS", str(tmp_path / "Documentos"))
-    monkeypatch.delenv("MUNDOPTAL_GOOGLE_CLIENTE", raising=False)
-    google_drive._TOKENS.clear()
-    google_drive._PENDIENTES.clear()
+    monkeypatch.setenv("MUNDOPTAL_MI_UNIDAD", "")
+    monkeypatch.setenv("MUNDOPTAL_CLAUDE_CONFIG", str(tmp_path / "claude" / "claude_desktop_config.json"))
     yield
     keyring.set_keyring(anterior)
-
-
-class GoogleFalso:
-    def __init__(self):
-        self.llamadas = []
-        self.carpetas = {}
-        self.sin_red = False
-
-    def __call__(self, metodo, url, datos=None, cabeceras=None, timeout=30):
-        if self.sin_red:
-            raise google_drive.ErrorDrive("No hay conexión con Google.")
-        self.llamadas.append((metodo, url, datos, cabeceras or {}))
-        if url == google_drive.URL_TOKEN:
-            f = dict(urllib.parse.parse_qsl(datos.decode()))
-            if f["grant_type"] == "authorization_code":
-                assert f["code"] == "codigo-ok" and f["code_verifier"] and f["client_secret"] == "GOCSPX-prueba"
-                carga = base64.urlsafe_b64encode(json.dumps({"email": "maestra@colegio.es"}).encode()).decode().rstrip("=")
-                return {"access_token": "acc-1", "expires_in": 3600, "refresh_token": "ref-1", "id_token": f"x.{carga}.y"}
-            assert f["refresh_token"] == "ref-1"
-            return {"access_token": "acc-2", "expires_in": 3600}
-        if url == google_drive.URL_REVOCAR:
-            return {}
-        assert cabeceras["Authorization"].startswith("Bearer acc-")
-        if url.startswith(google_drive.URL_SUBIDA):
-            assert b"application/vnd.google-apps." in datos and b"PK" in datos  # metadatos + .docx/.pptx (zip)
-            n = len(self.llamadas)
-            return {"id": f"doc{n}", "webViewLink": f"https://docs.google.com/document/d/doc{n}/edit"}
-        if metodo == "POST":
-            meta = json.loads(datos)
-            assert meta == {"name": "material mundo pt/al", "mimeType": google_drive.MIME_CARPETA}
-            cid = f"carpeta{len(self.carpetas) + 1}"
-            self.carpetas[cid] = False
-            return {"id": cid}
-        cid = url.split("/files/")[1].split("?")[0]
-        if cid not in self.carpetas:
-            raise google_drive.ErrorHTTP(404, {"error": {"message": "File not found"}})
-        return {"id": cid, "trashed": self.carpetas[cid]}
-
-
-@pytest.fixture
-def google(monkeypatch):
-    falso = GoogleFalso()
-    monkeypatch.setattr(google_drive, "_http", falso)
-    return falso
 
 
 def _app(tmp_path):
@@ -88,98 +38,87 @@ def _crear(c, h, formato="docx"):
     return c.post("/api/material/crear", json={"spec": p["spec"], "formato": formato, "abrir": True}, headers=h).get_json()
 
 
-def _conectar(c, h, abiertas):
-    url = c.post("/api/google/conectar", headers=h).get_json()["url"]
-    assert abiertas[-1] == url
-    q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
-    assert q["scope"] == google_drive.ALCANCES and q["code_challenge_method"] == "S256"
-    assert q["redirect_uri"].startswith("http://127.0.0.1:")
-    r = c.get(f"/?state={q['state']}&code=codigo-ok")
-    assert "Conectado" in r.get_data(as_text=True)
-    return q
-
-
-def test_cliente_oauth_valida_y_no_va_a_la_base_de_datos(tmp_path):
-    app, c, h, _ = _app(tmp_path)
-    assert c.get("/api/google/estado", headers=h).get_json()["configurado"] is False
-    assert c.post("/api/google/cliente", json={"texto": "{}"}, headers=h).status_code == 400
-    assert c.post("/api/google/conectar", headers=h).status_code == 400
-    assert c.post("/api/google/cliente", json={"texto": CLIENTE}, headers=h).status_code == 200
-    e = c.get("/api/google/estado", headers=h).get_json()
-    assert e["configurado"] and e["cliente_propio"] and not e["conectado"] and e["abrir_con"] == "drive"
-    app.extensions["store"].conn.execute("PRAGMA wal_checkpoint(FULL)")
-    for f in tmp_path.glob("m.db*"):
-        assert b"GOCSPX" not in f.read_bytes()
-    c.delete("/api/google/cliente", headers=h)
-    assert c.get("/api/google/estado", headers=h).get_json()["configurado"] is False
-
-
-def test_sin_conectar_se_abre_drive_para_subirlo_a_mano(tmp_path):
+def test_sin_drive_para_ordenadores_se_abre_drive_para_arrastrarlo(tmp_path):
     _, c, h, abiertas = _app(tmp_path)
     r = _crear(c, h)
     assert r["manual"] is True and abiertas == [google_drive.URL_MI_UNIDAD]
-    # Con «Word o PowerPoint» se abre en local (aquí no hay startfile) y no se abre el navegador
+    # Con el enlace de la carpeta guardado, se abre esa carpeta
+    url = "https://drive.google.com/drive/folders/abc123"
+    assert c.post("/api/google/ajustes", json={"carpeta_url": "https://ejemplo.com/x"}, headers=h).status_code == 400
+    c.post("/api/google/ajustes", json={"carpeta_url": url}, headers=h)
+    c.post(f"/api/materiales/{r['id']}/abrir", headers=h)
+    assert abiertas[-1] == url
+    # Con «Word o PowerPoint» se abre en local y no se abre el navegador
     c.post("/api/google/ajustes", json={"abrir_con": "local"}, headers=h)
     r = _crear(c, h)
-    assert "manual" not in r and r["abierto"] is False and len(abiertas) == 1
+    assert "manual" not in r and r["abierto"] is False and len(abiertas) == 2
+    # «☁ Drive» fuerza Google aunque el ajuste sea local
+    assert c.post(f"/api/materiales/{r['id']}/drive", headers=h).get_json()["manual"] is True
 
 
-def test_conectar_subir_convertido_y_reutilizar(tmp_path, google):
-    app, c, h, abiertas = _app(tmp_path)
-    c.post("/api/google/cliente", json={"texto": CLIENTE}, headers=h)
-    _conectar(c, h, abiertas)
+def test_con_drive_para_ordenadores_se_copia_a_la_carpeta_existente(tmp_path, monkeypatch):
+    unidad = tmp_path / "G" / "Mi unidad"
+    existente = unidad / "cuenta personal" / "Material Mundo PT_AL"
+    existente.mkdir(parents=True)
+    monkeypatch.setenv("MUNDOPTAL_MI_UNIDAD", str(unidad))
+    _, c, h, abiertas = _app(tmp_path)
     e = c.get("/api/google/estado", headers=h).get_json()
-    assert e["conectado"] and e["email"] == "maestra@colegio.es"
-    assert google_drive._leer("google_token_1") == "ref-1"
-
-    r = _crear(c, h, "docx")
-    assert r["drive_url"].startswith("https://docs.google.com/") and abiertas[-1] == r["drive_url"]
-    subida = [x for x in google.llamadas if x[1].startswith(google_drive.URL_SUBIDA)][-1]
-    assert b'"parents": ["carpeta1"]' in subida[2] and b"vnd.google-apps.document" in subida[2]
-    r2 = _crear(c, h, "pptx")
-    subida = [x for x in google.llamadas if x[1].startswith(google_drive.URL_SUBIDA)][-1]
-    assert b"vnd.google-apps.presentation" in subida[2] and b'"parents": ["carpeta1"]' in subida[2]
-    assert len(google.carpetas) == 1  # la carpeta se crea una vez y se reutiliza
-
-    # Abrir otra vez no vuelve a subir
-    n = len(google.llamadas)
-    a = c.post(f"/api/materiales/{r['id']}/abrir", headers=h).get_json()
-    assert a["drive_url"] == r["drive_url"] and len(google.llamadas) == n and abiertas[-1] == r["drive_url"]
-    lista = c.get("/api/materiales", headers=h).get_json()
-    assert {m["drive_url"] for m in lista} == {r["drive_url"], r2["drive_url"]}
-
-    # Si la carpeta va a la papelera, se crea otra
-    google.carpetas["carpeta1"] = True
-    _crear(c, h)
-    assert "carpeta2" in google.carpetas
-    assert app.extensions["store"].q1("SELECT valor FROM meta WHERE clave = 'drive.carpeta.1'")["valor"] == "carpeta2"
+    assert e["mi_unidad"] == str(unidad) and e["abrir_con"] == "drive"
+    r = _crear(c, h, "pptx")
+    assert r["sincronizado"] and (existente / r["nombre"]).exists()
+    assert abiertas[-1].startswith("https://drive.google.com/drive/search?q=")
+    assert urllib.parse.unquote(abiertas[-1].split("q=")[1]) == r["nombre"].rsplit(".", 1)[0]
 
 
-def test_sin_internet_se_avisa_y_el_archivo_queda(tmp_path, google):
-    _, c, h, abiertas = _app(tmp_path)
-    c.post("/api/google/cliente", json={"texto": CLIENTE}, headers=h)
-    _conectar(c, h, abiertas)
-    google_drive._TOKENS.clear()
-    google.sin_red = True
-    r = _crear(c, h)
-    assert "conexión" in r["aviso"] and (tmp_path / "Documentos" / "Material" / r["nombre"]).exists()
-    google.sin_red = False
-    r2 = c.post(f"/api/materiales/{r['id']}/drive", headers=h).get_json()
-    assert r2["drive_url"]
+def test_se_crea_la_carpeta_si_no_existe(tmp_path):
+    unidad = tmp_path / "Mi unidad"
+    unidad.mkdir()
+    destino = google_drive.copiar_a_drive(_archivo(tmp_path), unidad)
+    assert destino.parent == unidad / google_drive.NOMBRE_CARPETA and destino.exists()
 
 
-def test_estado_caducado_o_cancelado_y_desconectar(tmp_path, google):
-    _, c, h, abiertas = _app(tmp_path)
-    c.post("/api/google/cliente", json={"texto": CLIENTE}, headers=h)
-    url = c.post("/api/google/conectar", headers=h).get_json()["url"]
-    estado = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))["state"]
-    assert "cancelado" in c.get(f"/?state={estado}&error=access_denied").get_data(as_text=True)
-    assert "<!doctype html>" in c.get(f"/?state={estado}&code=codigo-ok").get_data(as_text=True).lower()  # ya no vale: index normal
-    assert not c.get("/api/google/estado", headers=h).get_json()["conectado"]
-    _conectar(c, h, abiertas)
-    c.post("/api/google/desconectar", headers=h)
-    assert not c.get("/api/google/estado", headers=h).get_json()["conectado"]
-    assert any(x[1] == google_drive.URL_REVOCAR for x in google.llamadas)
+def _archivo(tmp_path):
+    f = tmp_path / "ficha.docx"
+    f.write_bytes(b"PK prueba")
+    return f
+
+
+def test_mi_unidad_manual(tmp_path):
+    _, c, h, _ = _app(tmp_path)
+    assert c.post("/api/google/ajustes", json={"mi_unidad": str(tmp_path / "no-existe")}, headers=h).status_code == 400
+    otra = tmp_path / "Drive" / "Mi unidad"
+    otra.mkdir(parents=True)
+    c.post("/api/google/ajustes", json={"mi_unidad": str(otra)}, headers=h)
+    assert c.get("/api/google/estado", headers=h).get_json()["mi_unidad"] == str(otra)
+
+
+def test_peticion_a_claude_desktop_sin_nombres(tmp_path):
+    app, c, h, _ = _app(tmp_path)
+    al = c.post("/api/alumnos", json={"nombre": "Alumna Prueba"}, headers=h).get_json()["id"]
+    assert c.post("/api/material/claude-desktop", json={"peticion": " "}, headers=h).status_code == 400
+    r = c.post("/api/material/claude-desktop", json={"peticion": "Fichas del fonema /r/ para Alumna", "alumno_id": al,
+                                                     "nivel": "5", "formato": "pptx", "num": 6}, headers=h).get_json()
+    assert "Alumna" not in r["texto"] and "el alumno" in r["texto"] and r["anonimizados"]
+    assert "5 años" in r["texto"] and "PowerPoint" in r["texto"] and "6" in r["texto"] and "crear_material" in r["texto"]
+    assert r["abierto"] is False and r["ultimo_id"] == 0
+    url = claude_desktop.url_nuevo_chat(r["texto"])
+    assert url.startswith("claude://claude.ai/new?q=") and urllib.parse.unquote(url.split("q=", 1)[1]) == r["texto"]
+    assert c.get("/api/material/info", headers=h).get_json()["claude_desktop"] is False
+    claude_desktop.configurar()
+    assert c.get("/api/material/info", headers=h).get_json()["claude_desktop"] is True
+
+
+def test_chrome_o_navegador_predeterminado(tmp_path, monkeypatch):
+    exe = tmp_path / "Google" / "Chrome" / "Application" / "chrome.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    for var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432"):
+        monkeypatch.delenv(var, raising=False)
+    assert google_drive.chrome() == exe
+    lanzados = []
+    monkeypatch.setattr(google_drive.subprocess, "Popen", lambda args, **k: lanzados.append(args))
+    assert google_drive.abrir_navegador("https://drive.google.com/") == "chrome" and lanzados[0][1] == "https://drive.google.com/"
 
 
 def test_migracion_anade_columnas_de_drive(tmp_path):

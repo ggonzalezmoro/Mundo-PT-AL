@@ -24,12 +24,6 @@ jobs:
         run: |
           $v = (Select-String -Path mundoptal/config.py -Pattern 'APP_VERSION = "(.+)"').Matches[0].Groups[1].Value
           if ("v$v" -ne "${{ github.ref_name }}") { throw "La etiqueta ${{ github.ref_name }} no coincide con APP_VERSION ($v)" }
-      - name: Cliente OAuth de Google Drive (opcional, desde el secreto GOOGLE_OAUTH_CLIENT)
-        shell: pwsh
-        env:
-          GOOGLE_OAUTH_CLIENT: ${{ secrets.GOOGLE_OAUTH_CLIENT }}
-        run: |
-          if ($env:GOOGLE_OAUTH_CLIENT) { Set-Content -Path google_cliente.json -Value $env:GOOGLE_OAUTH_CLIENT -Encoding utf8NoBOM; "Incluido" } else { "Sin secreto: se configura en Ajustes" }
       - name: Construir (pruebas + PyInstaller + modelo de voz)
         shell: pwsh
         run: ./build.ps1

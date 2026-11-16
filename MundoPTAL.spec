@@ -12,10 +12,6 @@ hiddenimports = []
 if Path("models").exists():
     datas.append(("models", "models"))
 
-# Cliente OAuth de Google Drive (opcional; nunca está en el repositorio). Lo escribe el workflow
-# desde el secreto GOOGLE_OAUTH_CLIENT, o se deja a mano junto a este archivo antes de compilar.
-if Path("google_cliente.json").exists():
-    datas.append(("google_cliente.json", "."))
 
 # mcp: servidor para Claude Desktop (MundoPTAL.exe --mcp, por stdio, con el mismo exe sin ventana);
 # pptx: plantillas internas; anthropic/keyring: «Crear material con Claude» (keyring busca su
