@@ -15,3 +15,6 @@ models/
 # Nunca subir horarios ni hojas con nombres de alumnos
 *.csv
 *.xlsx
+# Credenciales del cliente OAuth de Google (se cargan en Ajustes o las añade la compilación)
+google_cliente.json
+client_secret*.json

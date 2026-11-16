@@ -1517,9 +1517,21 @@ async function pintarAvisos(caja, conEnlace = true) {
 const NOMBRE_ACT = { letra: "Letra grande", repasar: "Repasar", rodear: "Rodear", unir: "Unir con flechas", completar: "Completar",
   contar: "Contar", clasificar: "Clasificar", secuencia: "Secuencia", tarjetas: "Tarjetas", pregunta: "Pregunta", cuento: "Cuento" };
 let PROPUESTA = null;  // { spec, origen, tipo, alumno_id }
+let GOOGLE = {};  // estado de la conexión con Google Drive
+
+// Qué hacer con la respuesta de «crear» o «abrir» (Google Drive, a mano o Word/PowerPoint)
+function trasAbrirMaterial(r) {
+  if (r.drive_url) aviso("Abierto en Google Drive (pestaña nueva del navegador)");
+  else if (r.manual) aviso("Se ha abierto Google Drive en el navegador y la carpeta del archivo: arrastra el archivo a Drive y ábrelo con doble clic. "
+    + "Para que se suba y se abra solo, conecta tu cuenta en Ajustes › Google Drive.");
+  else if (r.aviso) aviso(r.aviso, true);
+  else if (r.abierto === false && r.ruta) aviso("Está en " + r.ruta);
+}
 
 async function vistaMaterial() {
-  const [info, alumnos, lista] = await Promise.all([api("GET", "/api/material/info"), api("GET", "/api/alumnos"), api("GET", "/api/materiales")]);
+  const [info, alumnos, lista, google] = await Promise.all([api("GET", "/api/material/info"), api("GET", "/api/alumnos"), api("GET", "/api/materiales"),
+    api("GET", "/api/google/estado").catch(() => ({}))]);
+  GOOGLE = google;
   const tipos = info.tipos;
   const opcAlumnos = `<option value="">Ninguno</option>${alumnos.map((a) => `<option value="${a.id}">${esc(a.nombre)}</option>`).join("")}`;
   const comunes = (p) => `<div class="campos material-campos">
@@ -1558,11 +1570,14 @@ async function vistaMaterial() {
           ${lista.length ? `<ul class="lista-material">${lista.map((m) => `<li>
               <span class="formato ${m.formato}">${m.formato === "pptx" ? "PPT" : "DOC"}</span>
               <div class="lm-texto"><strong>${esc(m.titulo)}</strong>
-                <span class="muted">${esc((m.creado || "").slice(0, 10))} · ${m.paginas} ${m.formato === "pptx" ? "diapositivas" : "fichas"}${m.origen === "ia" ? " · ✨ Claude" : ""}${m.alumno ? " · " + esc(m.alumno) : ""}${m.existe ? "" : " · ⚠ archivo movido o borrado"}</span></div>
-              ${m.existe ? `<button class="mini" data-abrir-material="${m.id}">Abrir</button><a class="boton mini" href="/api/materiales/${m.id}/archivo">Descargar</a>` : ""}
+                <span class="muted">${esc((m.creado || "").slice(0, 10))} · ${m.paginas} ${m.formato === "pptx" ? "diapositivas" : "fichas"}${m.origen === "ia" ? " · ✨ Claude" : ""}${m.alumno ? " · " + esc(m.alumno) : ""}${m.drive_url ? " · ☁ en Drive" : ""}${m.existe || m.drive_url ? "" : " · ⚠ archivo movido o borrado"}</span></div>
+              ${m.existe || m.drive_url ? `<button class="mini" data-abrir-material="${m.id}">${GOOGLE.abrir_con === "local" ? "Abrir" : "Abrir en Google"}</button>` : ""}
+              ${m.existe && GOOGLE.abrir_con === "local" ? `<button class="mini" data-drive-material="${m.id}" title="Subir a Google Drive y abrir con Documentos o Presentaciones de Google">☁ Drive</button>` : ""}
+              ${m.existe ? `<a class="boton mini" href="/api/materiales/${m.id}/archivo">Descargar</a>` : ""}
               <button class="icono" data-quitar-material="${m.id}" title="Quitar de la lista (el archivo no se borra)">✕</button></li>`).join("")}</ul>`
             : `<div class="vacio" style="padding:16px">Todavía no has creado material.</div>`}
-          <p class="muted" style="margin:8px 0 0;font-size:12px">Se guarda en: ${esc(info.carpeta)}</p></div>
+          <p class="muted" style="margin:8px 0 0;font-size:12px">Se guarda en: ${esc(info.carpeta)}${google.conectado
+            ? ` y en tu Google Drive (<a href="#" id="abrir-carpeta-drive">${esc(google.carpeta)}</a>)` : ""}</p></div>
       </div>
     </div>`;
   enlazarMicros(vista);
@@ -1607,9 +1622,19 @@ async function vistaMaterial() {
     } finally { b.disabled = false; $("#ia-estado").textContent = ""; }
   });
   $$("[data-abrir-material]").forEach((b) => b.onclick = () => intentar(async () => {
-    const r = await api("POST", `/api/materiales/${b.dataset.abrirMaterial}/abrir`);
-    if (!r.abierto) aviso("Está en " + r.ruta);
+    b.disabled = true;
+    try {
+      const r = await api("POST", `/api/materiales/${b.dataset.abrirMaterial}/abrir`);
+      trasAbrirMaterial(r);
+      if (r.drive_url && !lista.find((m) => m.id === Number(b.dataset.abrirMaterial)).drive_url) vistaMaterial();
+    } finally { b.disabled = false; }
   }));
+  $$("[data-drive-material]").forEach((b) => b.onclick = () => intentar(async () => {
+    b.disabled = true;
+    try { trasAbrirMaterial(await api("POST", `/api/materiales/${b.dataset.driveMaterial}/drive`)); vistaMaterial(); }
+    finally { b.disabled = false; }
+  }));
+  if ($("#abrir-carpeta-drive")) $("#abrir-carpeta-drive").onclick = (e) => { e.preventDefault(); intentar(() => api("POST", "/api/google/abrir-carpeta")); };
   $$("[data-quitar-material]").forEach((b) => b.onclick = () => intentar(async () => {
     if (!confirm("¿Quitar este material de la lista? El archivo se queda en la carpeta.")) return;
     await api("DELETE", `/api/materiales/${b.dataset.quitarMaterial}`);
@@ -1634,15 +1659,18 @@ function pintarPropuesta() {
     <div class="fila" style="gap:8px;flex-wrap:wrap;margin-top:10px">
       <button class="primario" data-crear="docx">📄 Crear Word</button><button class="primario" data-crear="pptx">📊 Crear PowerPoint</button>
       <button id="descartar-propuesta">Descartar</button></div>
-    <p class="muted" style="font-size:12px;margin:6px 0 0">El archivo se guarda y se abre con Word o PowerPoint. Después puedes retocarlo allí.</p>`;
+    <p class="muted" style="font-size:12px;margin:6px 0 0">${GOOGLE.abrir_con === "local" ? "El archivo se guarda y se abre con Word o PowerPoint. Después puedes retocarlo allí."
+      : GOOGLE.conectado ? "El archivo se guarda en el ordenador, se sube a tu Google Drive y se abre con Documentos o Presentaciones de Google para retocarlo."
+      : "El archivo se guarda en el ordenador y se abre Google Drive para que lo subas. Conecta tu cuenta en Ajustes › Google Drive para que se haga solo."}</p>`;
   $$("[data-crear]", caja).forEach((b) => b.onclick = () => intentar(async () => {
     b.disabled = true;
     const txt = b.textContent;
-    b.textContent = "Creando…";
+    b.textContent = GOOGLE.conectado && GOOGLE.abrir_con !== "local" ? "Creando y subiendo a Drive…" : "Creando…";
     try {
       const r = await api("POST", "/api/material/crear", { spec: s, formato: b.dataset.crear, alumno_id: PROPUESTA.alumno_id,
         origen: PROPUESTA.origen, tipo: PROPUESTA.tipo, abrir: true });
       aviso("Material guardado: " + r.nombre);
+      trasAbrirMaterial(r);
       vistaMaterial();
     } finally { b.disabled = false; b.textContent = txt; }
   }));
@@ -1706,6 +1734,75 @@ async function pintarAjustesMaterial() {
     recargar();
   });
   if ($("#logo-original")) $("#logo-original").onclick = () => intentar(async () => { await api("DELETE", "/api/material/logo"); recargar(); });
+}
+
+// Google Drive: el material se sube convertido a Documentos/Presentaciones de Google (sin Word ni PowerPoint)
+async function pintarAjustesGoogle() {
+  const caja = $("#ajustes-google");
+  if (!caja) return;
+  if (!USUARIO) { caja.innerHTML = "<h2>Google Drive</h2><p class='muted'>Elige primero tu perfil.</p>"; return; }
+  const g = await api("GET", "/api/google/estado").catch(() => null);
+  if (!g || !caja.isConnected) return;
+  caja.innerHTML = `<h2>Google Drive</h2>
+    <p class="muted" style="margin-top:0">Para ordenadores sin Word ni PowerPoint: el material se guarda en el ordenador y además se sube a tu Drive
+      convertido a <strong>Documentos</strong> o <strong>Presentaciones de Google</strong>, en la carpeta «${esc(g.carpeta)}», y se abre en el navegador.</p>
+    <h3 style="margin:0 0 6px">Al crear o abrir material</h3>
+    <label class="fila" style="gap:6px"><input type="radio" name="abrir-con" value="drive" ${g.abrir_con !== "local" ? "checked" : ""} style="width:auto"> Abrir con Google Drive (Documentos y Presentaciones de Google)</label>
+    <label class="fila" style="gap:6px"><input type="radio" name="abrir-con" value="local" ${g.abrir_con === "local" ? "checked" : ""} style="width:auto"> Abrir con Word o PowerPoint de este ordenador</label>
+    <h3 style="margin:14px 0 6px">Tu cuenta de Google</h3>
+    ${g.conectado ? `<p>✅ Conectada${g.email ? ` como <strong>${esc(g.email)}</strong>` : ""}.
+        ${g.carpeta_url ? `<a href="#" id="g-carpeta">Abrir la carpeta en Drive</a>` : ""}</p>
+        <p class="muted" style="font-size:12px">La aplicación solo puede ver lo que sube ella. Puedes mover la carpeta «${esc(g.carpeta)}» dentro de otra (por ejemplo «cuenta personal») y seguirá subiendo allí.</p>
+        <p><button class="peligro" id="g-desconectar">Desconectar</button></p>`
+      : g.configurado ? `<p>Sin conectar. Al pulsar el botón se abre el navegador para que elijas tu cuenta del colegio y des permiso.</p>
+        <p><button class="primario" id="g-conectar">🔗 Conectar con Google</button></p>
+        <p class="muted" style="font-size:12px">Mientras no conectes, al crear material se abre Google Drive y la carpeta del archivo para que lo arrastres.</p>`
+      : `<p>⚠️ Falta la configuración de Google (se hace una sola vez; ver abajo). Mientras tanto, al crear material se abre Google Drive y la carpeta del archivo para que lo arrastres.</p>`}
+    <details class="avanzadas" ${g.configurado ? "" : "open"}><summary>Configuración de Google (una vez)</summary>
+      <p class="muted">Necesita un «cliente OAuth» de Google Cloud. Lo prepara una vez quien gestione la aplicación:</p><ol class="muted">
+        <li>En <strong>console.cloud.google.com</strong>, crea un proyecto y activa la <strong>Google Drive API</strong>.</li>
+        <li>En <strong>Google Auth Platform</strong>, configura la pantalla de consentimiento (público «Interno» si la cuenta es del colegio; si no, «Externo» y publícala).</li>
+        <li>En <strong>Clientes › Crear cliente</strong>, elige «App de escritorio» y descarga el JSON.</li>
+        <li>Cárgalo aquí con el botón de abajo.</li></ol>
+      <p>Configuración: ${g.configurado ? "<strong>✅ cargada</strong>" : "<strong>sin cargar</strong>"}
+        <label class="boton" for="g-cliente">📄 Cargar JSON del cliente</label><input type="file" id="g-cliente" accept=".json" hidden>
+        ${g.cliente_propio ? '<button id="g-quitar-cliente">Quitar</button>' : ""}</p>
+      <p class="muted" style="font-size:12px">Se guarda en el Administrador de credenciales de Windows de este ordenador, no en tus datos.</p>
+    </details>`;
+  const recargar = () => pintarAjustesGoogle();
+  $$("[name=abrir-con]", caja).forEach((r) => r.onchange = () => intentar(async () => {
+    await api("POST", "/api/google/ajustes", { abrir_con: r.value });
+    aviso("Guardado");
+  }));
+  if ($("#g-conectar")) $("#g-conectar").onclick = () => intentar(async () => {
+    await api("POST", "/api/google/conectar");
+    aviso("Se ha abierto el navegador: elige tu cuenta y pulsa «Continuar». Después vuelve aquí.");
+    let n = 0;
+    const comprobar = setInterval(async () => {
+      n += 1;
+      const e = await api("GET", "/api/google/estado").catch(() => null);
+      if (!caja.isConnected || n > 100 || (e && e.conectado)) {
+        clearInterval(comprobar);
+        if (e && e.conectado && caja.isConnected) { aviso("✅ Conectada con Google Drive"); recargar(); }
+      }
+    }, 3000);
+  });
+  if ($("#g-desconectar")) $("#g-desconectar").onclick = () => intentar(async () => {
+    if (!confirm("¿Desconectar Google Drive en este ordenador? Lo que ya está en Drive no se borra.")) return;
+    await api("POST", "/api/google/desconectar");
+    recargar();
+  });
+  if ($("#g-carpeta")) $("#g-carpeta").onclick = (e) => { e.preventDefault(); intentar(() => api("POST", "/api/google/abrir-carpeta")); };
+  $("#g-cliente").onchange = (e) => intentar(async () => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append("archivo", f);
+    await api("POST", "/api/google/cliente", fd);
+    aviso("Configuración de Google cargada");
+    recargar();
+  });
+  if ($("#g-quitar-cliente")) $("#g-quitar-cliente").onclick = () => intentar(async () => { await api("DELETE", "/api/google/cliente"); recargar(); });
 }
 
 const COLORES_CAL = ["#7FB3D5", "#F1948A", "#82E0AA", "#F8C471", "#BB8FCE", "#76D7C4", "#F0B27A", "#AEB6BF"];
@@ -1869,8 +1966,10 @@ async function vistaAjustes() {
     </div>
     <div class="tarjeta" id="ajustes-calendario"><h2>Google Calendar</h2><p class="muted">Cargando…</p></div>
     <div class="tarjeta" id="ajustes-material"><h2>Crear material</h2><p class="muted">Cargando…</p></div>
+    <div class="tarjeta" id="ajustes-google"><h2>Google Drive</h2><p class="muted">Cargando…</p></div>
     <div class="tarjeta" id="ajustes-claude-desktop"><h2>Usar con Claude Desktop</h2><p class="muted">Cargando…</p></div>`;
   pintarAjustesMaterial();
+  pintarAjustesGoogle();
   pintarAjustesCalendario();
   pintarAjustesClaudeDesktop();
   $("#copia").onclick = () => intentar(async () => { const r = await api("POST", "/api/copia-seguridad"); aviso("Copia guardada en " + r.ruta); });

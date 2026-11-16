@@ -5,13 +5,15 @@ import datetime as dt
 import os
 import re
 import sqlite3
+import subprocess
 import tempfile
+import webbrowser
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import (actualizador, biblioteca, calendario, claude_desktop, db as basedatos, dictado, horario, ia_material, informes,
-               maqueta, material, mcp_server, trabajo)
+from . import (actualizador, biblioteca, calendario, claude_desktop, db as basedatos, dictado, google_drive, horario, ia_material,
+               informes, maqueta, material, mcp_server, trabajo)
 from .config import APP_NAME, APP_VERSION, COLEGIO, DIAS, ESCALA, ESCALA_TEXTO, data_dir, static_dir
 from .planificador import Planificador, lunes_de
 from .store import Store, StoreError
@@ -71,6 +73,9 @@ def crear_app(db_path: str | Path) -> Flask:
     # ------------------------------------------------------------ interfaz
     @app.get("/")
     def index():
+        estado = request.args.get("state", "")
+        if estado and google_drive.es_estado(estado):
+            return google_vuelta(estado)
         return send_from_directory(static_dir(), "index.html")
 
     @app.get("/static/<path:nombre>")
@@ -274,11 +279,14 @@ def crear_app(db_path: str | Path) -> Flask:
         with store.tx() as c:
             mid = biblioteca.registrar(c, uid, spec, formato, ruta, d.get("tipo", ""), d.get("origen") or "plantilla",
                                        d.get("alumno_id"))
+        resp = {"id": mid, "ruta": str(ruta), "nombre": ruta.name}
         if d.get("abrir"):
-            abrir_archivo(ruta)
-        return jsonify(id=mid, ruta=str(ruta), nombre=ruta.name)
+            resp.update(abrir_material(uid, mid))
+        return jsonify(resp)
 
     def abrir_archivo(ruta: Path) -> bool:
+        if app.extensions.get("sin_abrir"):  # pruebas automáticas
+            return False
         if hasattr(os, "startfile") and ruta.exists():
             try:
                 os.startfile(str(ruta))  # noqa: S606 - abre el documento con Word o PowerPoint
@@ -303,10 +311,129 @@ def crear_app(db_path: str | Path) -> Flask:
 
     @app.post("/api/materiales/<int:mid>/abrir")
     def material_abrir(mid):
-        ruta = Path(material_de(mid)["ruta"])
+        m = material_de(mid)
+        if m.get("drive_url") and abrir_con(usuario_actual()) == "drive":
+            abrir_web(m["drive_url"])
+            return jsonify(abierto=True, drive_url=m["drive_url"], ruta=m["ruta"])
+        ruta = Path(m["ruta"])
         if not ruta.exists():
             raise StoreError("El archivo ya no está en la carpeta de material")
+        if abrir_con(usuario_actual()) == "drive":
+            return jsonify(abierto=True, ruta=str(ruta), **abrir_material(usuario_actual(), mid))
         return jsonify(abierto=abrir_archivo(ruta), ruta=str(ruta))
+
+    @app.post("/api/materiales/<int:mid>/drive")
+    def material_drive(mid):
+        """«Abrir en Google»: sube el material si no estaba subido y lo abre en el navegador."""
+        return jsonify(abrir_material(usuario_actual(), mid, forzar_drive=True))
+
+    # ------------------------------------------------------------ Google Drive (material sin Office)
+    def abrir_web(url: str) -> None:
+        (app.extensions.get("abrir_web") or webbrowser.open)(url)
+
+    def mostrar_en_carpeta(ruta: Path) -> None:
+        if app.extensions.get("sin_abrir"):
+            return
+        if os.name == "nt" and ruta.exists():
+            subprocess.Popen(["explorer", "/select,", str(ruta)])  # noqa: S603,S607 - Explorador de Windows
+
+    def abrir_con(uid) -> str:
+        return ajuste(f"material.abrir_con.{uid or 0}", "drive")
+
+    def abrir_material(uid, mid: int, forzar_drive: bool = False) -> dict:
+        """Abre el material según el ajuste del perfil:
+        - «drive» (por defecto): con Google conectado, lo sube convertido a Documentos o Presentaciones
+          de Google y lo abre en el navegador; si no, abre Mi unidad y la carpeta del archivo para
+          arrastrarlo. Sin Internet se queda en el ordenador y se avisa.
+        - «local»: con Word o PowerPoint de este ordenador."""
+        m = material_de(mid)
+        ruta = Path(m["ruta"])
+        if not forzar_drive and abrir_con(uid) != "drive":
+            return {"abierto": abrir_archivo(ruta)}
+        if m.get("drive_url"):
+            abrir_web(m["drive_url"])
+            return {"drive_url": m["drive_url"]}
+        if not ruta.exists():
+            raise StoreError("El archivo ya no está en la carpeta de material")
+        if not (google_drive.cliente() and google_drive.conectado(uid)):
+            mostrar_en_carpeta(ruta)
+            abrir_web(google_drive.URL_MI_UNIDAD)
+            return {"manual": True}
+        try:
+            carpeta = google_drive.asegurar_carpeta(uid, ajuste(f"drive.carpeta.{uid or 0}"))
+            if carpeta != ajuste(f"drive.carpeta.{uid or 0}"):
+                poner_ajuste(f"drive.carpeta.{uid or 0}", carpeta)
+            f = google_drive.subir(uid, ruta, m["titulo"], m["formato"], carpeta)
+        except google_drive.ErrorDrive as e:
+            return {"aviso": str(e)}
+        with store.tx() as c:
+            c.execute("UPDATE materiales SET drive_id = ?, drive_url = ? WHERE id = ?", (f["id"], f["url"], mid))
+        abrir_web(f["url"])
+        return {"drive_url": f["url"]}
+
+    def google_vuelta(estado: str):
+        """Google vuelve aquí (http://127.0.0.1:puerto/?code=…&state=…) después de iniciar sesión."""
+        if request.args.get("error"):
+            google_drive.cancelar(estado)
+            titulo, texto = "No se ha conectado", "Has cancelado el permiso. Puedes volver a intentarlo desde Ajustes."
+        else:
+            try:
+                r = google_drive.completar(estado, request.args.get("code", ""))
+                poner_ajuste(f"drive.email.{r['uid'] or 0}", r["email"])
+                titulo, texto = "✅ Conectado con Google Drive", "Ya puedes cerrar esta pestaña y volver a Mundo PT-AL."
+            except google_drive.ErrorDrive as e:
+                titulo, texto = "No se ha conectado", str(e)
+        from html import escape
+        return Response(f"""<!doctype html><meta charset="utf-8"><title>Mundo PT-AL</title>
+<body style="font-family:Segoe UI,sans-serif;text-align:center;padding:60px;color:#146834">
+<h1>{escape(titulo)}</h1><p style="color:#333">{escape(texto)}</p></body>""", mimetype="text/html")
+
+    @app.get("/api/google/estado")
+    def google_estado():
+        uid = usuario_actual()
+        con = google_drive.conectado(uid)
+        carpeta = ajuste(f"drive.carpeta.{uid or 0}")
+        return jsonify(configurado=bool(google_drive.cliente()), cliente_propio=google_drive.cliente_propio(), conectado=con,
+                       email=ajuste(f"drive.email.{uid or 0}") if con else "", abrir_con=abrir_con(uid),
+                       carpeta=google_drive.NOMBRE_CARPETA, carpeta_url=google_drive.url_carpeta(carpeta) if con and carpeta else "")
+
+    @app.post("/api/google/cliente")
+    def google_cliente():
+        f = request.files.get("archivo")
+        texto = f.read().decode("utf-8", "replace") if f else str(cuerpo().get("texto", ""))
+        google_drive.guardar_cliente(texto)
+        return jsonify(ok=True)
+
+    @app.delete("/api/google/cliente")
+    def google_quitar_cliente():
+        google_drive.borrar_cliente()
+        return jsonify(ok=True)
+
+    @app.post("/api/google/conectar")
+    def google_conectar():
+        uid = usuario_actual()
+        url = google_drive.iniciar(uid, f"http://127.0.0.1:{request.host.rsplit(':', 1)[-1]}/")
+        abrir_web(url)
+        return jsonify(url=url)
+
+    @app.post("/api/google/desconectar")
+    def google_desconectar():
+        uid = usuario_actual()
+        google_drive.desconectar(uid)
+        poner_ajuste(f"drive.email.{uid or 0}", "")
+        return jsonify(ok=True)
+
+    @app.post("/api/google/abrir-carpeta")
+    def google_abrir_carpeta():
+        abrir_web(google_drive.url_carpeta(ajuste(f"drive.carpeta.{usuario_actual() or 0}")))
+        return jsonify(ok=True)
+
+    @app.post("/api/google/ajustes")
+    def google_ajustes():
+        valor = cuerpo().get("abrir_con")
+        if valor in ("drive", "local"):
+            poner_ajuste(f"material.abrir_con.{usuario_actual() or 0}", valor)
+        return jsonify(ok=True)
 
     @app.get("/api/materiales/<int:mid>/archivo")
     def material_archivo(mid):

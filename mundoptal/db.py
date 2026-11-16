@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -200,6 +200,8 @@ CREATE TABLE IF NOT EXISTS materiales (
     formato TEXT NOT NULL DEFAULT 'docx',
     paginas INTEGER NOT NULL DEFAULT 0,
     ruta TEXT NOT NULL DEFAULT '',
+    drive_id TEXT NOT NULL DEFAULT '',   -- copia en Google Drive (Documentos/Presentaciones de Google)
+    drive_url TEXT NOT NULL DEFAULT '',
     creado TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -296,6 +298,11 @@ def _migrar(conn: sqlite3.Connection) -> None:
                           ("tipo", "TEXT NOT NULL DEFAULT 'colegio'"), ("visible", "INTEGER NOT NULL DEFAULT 1")):
             if col not in cols:
                 conn.execute(f"ALTER TABLE calendarios_externos ADD COLUMN {col} {tipo}")
+    if "materiales" in tablas:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(materiales)")}
+        for col in ("drive_id", "drive_url"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE materiales ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
     if "meta" in tablas:
         conn.execute("UPDATE meta SET valor = ? WHERE clave = 'schema_version'", (str(SCHEMA_VERSION),))
 
