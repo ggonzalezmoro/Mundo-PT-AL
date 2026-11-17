@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -172,7 +172,8 @@ CREATE TABLE IF NOT EXISTS tareas (
     hecha INTEGER NOT NULL DEFAULT 0,
     hecha_en TEXT,
     orden INTEGER NOT NULL DEFAULT 0,
-    creada TEXT DEFAULT CURRENT_TIMESTAMP
+    creada TEXT DEFAULT CURRENT_TIMESTAMP,
+    cita_id INTEGER REFERENCES citas(id) ON DELETE SET NULL  -- reunión de la que salió la tarea
 );
 
 CREATE TABLE IF NOT EXISTS citas (
@@ -237,6 +238,7 @@ CREATE TABLE IF NOT EXISTS eventos_externos (
 CREATE INDEX IF NOT EXISTS ix_eventos_ext ON eventos_externos(usuario_id, inicio);
 CREATE INDEX IF NOT EXISTS ix_materiales_usuario ON materiales(usuario_id);
 CREATE INDEX IF NOT EXISTS ix_tareas_usuario ON tareas(usuario_id);
+CREATE INDEX IF NOT EXISTS ix_tareas_cita ON tareas(cita_id);
 CREATE INDEX IF NOT EXISTS ix_citas_fecha ON citas(usuario_id, fecha);
 CREATE INDEX IF NOT EXISTS ix_acis_alumno ON acis(alumno_id);
 CREATE INDEX IF NOT EXISTS ix_informes_alumno ON informes(alumno_id);
@@ -298,6 +300,10 @@ def _migrar(conn: sqlite3.Connection) -> None:
                           ("tipo", "TEXT NOT NULL DEFAULT 'colegio'"), ("visible", "INTEGER NOT NULL DEFAULT 1")):
             if col not in cols:
                 conn.execute(f"ALTER TABLE calendarios_externos ADD COLUMN {col} {tipo}")
+    if "tareas" in tablas:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(tareas)")}
+        if "cita_id" not in cols:
+            conn.execute("ALTER TABLE tareas ADD COLUMN cita_id INTEGER REFERENCES citas(id) ON DELETE SET NULL")
     if "materiales" in tablas:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(materiales)")}
         for col in ("drive_id", "drive_url"):

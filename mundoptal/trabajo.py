@@ -1,6 +1,7 @@
 """Trabajo personal de la maestra de PT/AL, fuera de las sesiones con alumnos:
-lista de tareas pendientes (material, pruebas de lenguaje, correos…) y agenda
-mensual de citas (tutorías con familias y reuniones con terapeutas).
+lista de tareas pendientes (material, pruebas de lenguaje, correos…), agenda
+mensual de citas y reuniones (familias, Orientación, profesores, terapeutas)
+con sus notas, de las que cada línea se puede pasar a tarea pendiente.
 
 Todo es por perfil (usuario) y se guarda solo en este equipo."""
 from __future__ import annotations
@@ -15,14 +16,19 @@ CATEGORIAS = {
     "prueba": "Prueba de lenguaje",
     "correos": "Correos",
     "tutoria": "Tutoría familia",
-    "reunion": "Reunión terapeutas",
+    "reunion": "Reuniones",
     "otros": "Otros",
 }
 TIPOS_CITA = {
     "tutoria_familia": "Tutoría con la familia",
+    "reunion_orientacion": "Reunión con Orientación",
+    "reunion_profesores": "Reunión con profesores",
     "reunion_terapeutas": "Reunión con terapeutas",
     "otra": "Otra cita",
 }
+# Categoría que toman las tareas que salen de cada tipo de reunión
+CATEGORIA_DE_CITA = {"tutoria_familia": "tutoria"}
+RX_VINETA = re.compile(r"^\s*(?:[-*•·▪◦→>]+|\d{1,2}[.)]|\[\s?[xX]?\s?\]|☐|☑)\s*")
 RX_FECHA = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 RX_HORA = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -72,8 +78,9 @@ def validar(tabla: str, d: dict) -> dict:
         d["hora_fin"] = _hora(d["hora_fin"])
     if "hecha" in d:
         d["hecha"] = int(bool(d["hecha"]))
-    if "alumno_id" in d:
-        d["alumno_id"] = int(d["alumno_id"]) if d["alumno_id"] not in (None, "", 0, "0") else None
+    for k in ("alumno_id", "cita_id"):
+        if k in d:
+            d[k] = int(d[k]) if d[k] not in (None, "", 0, "0") else None
     for k in ("con_quien", "lugar", "notas"):
         if k in d:
             d[k] = str(d[k] or "").strip()
@@ -81,22 +88,41 @@ def validar(tabla: str, d: dict) -> dict:
 
 
 # ------------------------------------------------------------------ tareas
+SQL_TAREAS = """SELECT t.*, al.nombre AS alumno, ci.fecha AS cita_fecha, ci.tipo AS cita_tipo
+    FROM tareas t LEFT JOIN alumnos al ON al.id = t.alumno_id LEFT JOIN citas ci ON ci.id = t.cita_id"""
+
+
 def listar_tareas(store: Store, usuario_id: int | None) -> list[dict]:
     return store.q(
-        """SELECT t.*, al.nombre AS alumno FROM tareas t LEFT JOIN alumnos al ON al.id = t.alumno_id
-           WHERE t.usuario_id IS ? ORDER BY t.hecha, t.fecha_limite IS NULL, t.fecha_limite, t.orden, t.id""",
-        (usuario_id,))
+        f"""{SQL_TAREAS} WHERE t.usuario_id IS ?
+            ORDER BY t.hecha, t.fecha_limite IS NULL, t.fecha_limite, t.orden, t.id""", (usuario_id,))
+
+
+def limpiar_linea(texto: str) -> str:
+    """Quita viñetas, números y casillas del principio de una línea de notas."""
+    return RX_VINETA.sub("", str(texto or ""), count=1).strip()
 
 
 def crear_tarea(store: Store, usuario_id: int | None, datos: dict) -> int:
-    d = validar("tareas", {"categoria": "otros", **{k: v for k, v in (datos or {}).items()
-                                                    if k in ("texto", "categoria", "alumno_id", "fecha_limite")}})
+    datos = {k: v for k, v in (datos or {}).items() if k in ("texto", "categoria", "alumno_id", "fecha_limite", "cita_id")}
+    cita = None
+    if datos.get("cita_id"):
+        cita = store.q("SELECT * FROM citas WHERE id = ? AND usuario_id IS ?", (datos["cita_id"], usuario_id))
+        if not cita:
+            raise StoreError("La reunión no existe")
+        cita = cita[0]
+        datos["texto"] = limpiar_linea(datos.get("texto"))
+        # Lo que no se diga hereda de la reunión: el alumno y la categoría
+        if not datos.get("alumno_id"):
+            datos["alumno_id"] = cita["alumno_id"]
+        datos.setdefault("categoria", CATEGORIA_DE_CITA.get(cita["tipo"], "reunion"))
+    d = validar("tareas", {"categoria": "otros", **datos})
     if "texto" not in d:
         raise StoreError("Escribe la tarea")
     with store.tx() as c:
         return c.execute(
-            "INSERT INTO tareas(usuario_id, texto, categoria, alumno_id, fecha_limite) VALUES (?, ?, ?, ?, ?)",
-            (usuario_id, d["texto"], d["categoria"], d.get("alumno_id"), d.get("fecha_limite"))).lastrowid
+            "INSERT INTO tareas(usuario_id, texto, categoria, alumno_id, fecha_limite, cita_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (usuario_id, d["texto"], d["categoria"], d.get("alumno_id"), d.get("fecha_limite"), d.get("cita_id"))).lastrowid
 
 
 def borrar_hechas(store: Store, usuario_id: int | None) -> int:
@@ -130,6 +156,35 @@ def crear_cita(store: Store, usuario_id: int | None, datos: dict) -> int:
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (usuario_id, d["fecha"], d.get("hora_inicio") or "", d.get("hora_fin"), d["tipo"], d.get("alumno_id"),
              d.get("con_quien", ""), d.get("lugar", ""), d.get("notas", ""))).lastrowid
+
+
+# ------------------------------------------------------------------ reuniones
+def listar_reuniones(store: Store, usuario_id: int | None, tipo: str = "", alumno_id: int | None = None) -> list[dict]:
+    """Todas las citas y reuniones (más recientes primero) con el recuento de sus tareas."""
+    filtro, params = "", [usuario_id]
+    if tipo:
+        if tipo not in TIPOS_CITA:
+            raise StoreError("Tipo de reunión no válido")
+        filtro, params = filtro + " AND ci.tipo = ?", params + [tipo]
+    if alumno_id:
+        filtro, params = filtro + " AND ci.alumno_id = ?", params + [alumno_id]
+    return store.q(
+        f"""SELECT ci.*, al.nombre AS alumno,
+                   (SELECT COUNT(*) FROM tareas t WHERE t.cita_id = ci.id) AS tareas_total,
+                   (SELECT COUNT(*) FROM tareas t WHERE t.cita_id = ci.id AND t.hecha = 0) AS tareas_pendientes
+            FROM citas ci LEFT JOIN alumnos al ON al.id = ci.alumno_id
+            WHERE ci.usuario_id IS ?{filtro}
+            ORDER BY ci.fecha DESC, ci.hora_inicio DESC, ci.id DESC""", params)
+
+
+def obtener_reunion(store: Store, usuario_id: int | None, cita_id: int) -> dict:
+    r = store.q("""SELECT ci.*, al.nombre AS alumno FROM citas ci LEFT JOIN alumnos al ON al.id = ci.alumno_id
+                   WHERE ci.id = ? AND ci.usuario_id IS ?""", (cita_id, usuario_id))
+    if not r:
+        raise StoreError("La reunión no existe")
+    r = r[0]
+    r["tareas"] = store.q(f"{SQL_TAREAS} WHERE t.cita_id = ? ORDER BY t.hecha, t.id", (cita_id,))
+    return r
 
 
 def rango_mes(mes: str) -> tuple[str, str]:

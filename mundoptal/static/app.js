@@ -73,6 +73,8 @@ const rutas = [
   [/^#\/informe\/(\d+)$/, vistaInforme, "informes"],
   [/^#\/trabajo(?:\/(dia|semana|mes))?(?:\/(\d{4}-\d{2}(?:-\d{2})?))?$/, vistaTrabajo, "trabajo"],
   [/^#\/material$/, vistaMaterial, "material"],
+  [/^#\/reuniones$/, vistaReuniones, "reuniones"],
+  [/^#\/reunion\/(\d+)$/, vistaReunion, "reuniones"],
 ];
 
 async function enrutar() {
@@ -156,7 +158,7 @@ async function importarWord(archivo, alumnoId) {
 }
 
 async function vistaAlumno(id) {
-  const a = await api("GET", `/api/alumnos/${id}`);
+  const [a] = await Promise.all([api("GET", `/api/alumnos/${id}`), infoTrabajo()]);
   vista.innerHTML = `
     <div class="migas"><a href="#/alumnos">Alumnos</a> › ${esc(a.nombre)}</div>
     <div class="cabecera"><div><h1>${esc(a.nombre)}</h1><p class="sub">${esc(a.curso)}</p></div>
@@ -179,9 +181,10 @@ async function vistaAlumno(id) {
       <p style="margin:12px 0 0"><button id="nuevo-informe">📝 Informe del trimestre actual</button></p></div>
     <div class="tarjeta"><h2>Tutorías y reuniones</h2>
       ${(a.citas || []).length ? `<ul class="lista-citas">${a.citas.map((c) => `<li>
-          <button type="button" class="cita ${c.tipo} ${c.hecha ? "hecha" : ""}" data-cita-alumno="${c.id}">${c.tipo === "tutoria_familia" ? "Tutoría familia" : c.tipo === "reunion_terapeutas" ? "Reunión terapeutas" : "Cita"}</button>
+          <button type="button" class="cita ${c.tipo} ${c.hecha ? "hecha" : ""}" data-cita-alumno="${c.id}">${esc(TRABAJO.tipos_cita[c.tipo] || "Cita")}</button>
           <strong>${fechaCorta(c.fecha)}/${c.fecha.slice(0, 4)}</strong>${c.hora_inicio ? " · " + c.hora_inicio : ""}${c.con_quien ? " · " + esc(c.con_quien) : ""}
-          ${c.notas ? `<div class="muted" style="margin-left:4px">${esc(c.notas)}</div>` : ""}</li>`).join("")}</ul>`
+          <a class="boton mini" href="#/reunion/${c.id}">📝 Notas y tareas</a>
+          ${c.notas ? `<div class="muted notas-cita">${esc(c.notas)}</div>` : ""}</li>`).join("")}</ul>`
         : `<div class="vacio" style="padding:16px">Sin tutorías ni reuniones todavía.</div>`}
       <p style="margin:12px 0 0"><button id="nueva-tutoria">＋ Nueva tutoría o reunión</button></p></div>
     <div class="tarjeta"><h2>ACIs</h2>
@@ -456,29 +459,32 @@ function enlazarMicros(raiz) {
       aviso("Dictado sin conexión no disponible. Pulsa Windows + H para dictar en el cuadro.");
       return;
     }
-    const base = ta.value.trim();
+    const lineas = "microLineas" in ta.dataset;  // notas por líneas: cada dictado en una línea nueva
+    const base = lineas ? ta.value.replace(/\s+$/, "") : ta.value.trim();
+    const sep = lineas && base ? "\n" : " ";
     await api("POST", "/api/voz/iniciar");
     b.classList.add("grabando");
     b.textContent = "⏹";
     const sondeoMicro = setInterval(async () => {
       const e = await api("GET", "/api/voz").catch(() => null);
       if (!e) return;
-      ta.value = [base, e.texto, e.parcial].filter(Boolean).join(" ");
+      const dicho = [e.texto, e.parcial].filter(Boolean).join(" ");
+      ta.value = dicho ? [base, dicho].filter(Boolean).join(sep) : base;
       if (e.error) aviso(e.error, true);
       if (!e.grabando) await pararMicro();
     }, 600);
-    microActivo = { boton: b, ta, base, sondeo: sondeoMicro };
+    microActivo = { boton: b, ta, base, sep, sondeo: sondeoMicro };
   }));
 }
 async function pararMicro() {
   if (!microActivo) return;
-  const { boton, ta, base, sondeo: s } = microActivo;
+  const { boton, ta, base, sep, sondeo: s } = microActivo;
   microActivo = null;
   clearInterval(s);
   const e = await api("POST", "/api/voz/detener").catch(() => null);
   boton.classList.remove("grabando");
   boton.textContent = "🎤";
-  if (e) ta.value = [base, e.texto].filter(Boolean).join(" ");
+  if (e) ta.value = [base, e.texto].filter(Boolean).join(sep || " ");
   ta.dispatchEvent(new Event("change"));
 }
 window.addEventListener("hashchange", () => { pararMicro(); });
@@ -1405,6 +1411,7 @@ function pintarTareas(tareas, alumnos) {
       <div class="tarea-texto">${esc(t.texto)}
         <div class="tarea-meta"><span class="cat ${t.categoria}">${esc(cats[t.categoria] || t.categoria)}</span>
           ${t.alumno ? `<span class="muted">👧 ${esc(t.alumno)}</span>` : ""}
+          ${t.cita_id ? `<a href="#/reunion/${t.cita_id}" class="enlace-reunion">🤝 ${esc(TRABAJO.tipos_cita[t.cita_tipo] || "Reunión")} · ${fechaCorta(t.cita_fecha)}</a>` : ""}
           ${t.fecha_limite ? `<span class="fecha-limite">📅 ${t.fecha_limite === hoy ? "hoy" : fechaCorta(t.fecha_limite)}${!t.hecha && t.fecha_limite < hoy ? " · vencida" : ""}</span>` : ""}</div></div>
       <button class="icono" data-tarea-borrar="${t.id}" title="Borrar tarea">✕</button></li>`;
   caja.innerHTML = `<h2>Tareas pendientes</h2>
@@ -1473,7 +1480,8 @@ async function dialogoCita(c, alumnos, alGuardar) {
         <textarea id="c-notas" rows="3" style="flex:1" placeholder="Temas a tratar, acuerdos…">${esc(v.notas)}</textarea>${botonMicro("c-notas")}</div></div>
       ${nueva ? "" : `<div class="campo-ancho"><label class="fila" style="gap:6px"><input type="checkbox" id="c-hecha" ${v.hecha ? "checked" : ""}> Ya se ha hecho</label></div>`}
     </div></div>
-    <div class="dlg-pie">${nueva ? "" : `<button class="peligro" id="c-borrar">Borrar</button>`}
+    <div class="dlg-pie">${nueva ? "" : `<button class="peligro" id="c-borrar">Borrar</button>
+      <button id="c-abrir" title="Tomar notas y pasar líneas a tareas">📝 Notas y tareas</button>`}
       <button id="c-cancelar">Cancelar</button><button class="primario" id="c-guardar">Guardar</button></div>`;
   dialogo.showModal();
   enlazarMicros(dialogo);
@@ -1491,6 +1499,7 @@ async function dialogoCita(c, alumnos, alGuardar) {
     aviso(nueva ? "Cita guardada" : "Cita actualizada");
     alGuardar && alGuardar();
   });
+  if (!nueva) $("#c-abrir").onclick = async () => { await cerrar(); location.hash = `#/reunion/${v.id}`; };
   if (!nueva) $("#c-borrar").onclick = () => intentar(async () => {
     if (!confirm("¿Borrar esta cita?")) return;
     await api("DELETE", `/api/citas/${v.id}`);
@@ -1511,6 +1520,266 @@ async function pintarAvisos(caja, conEnlace = true) {
     ...av.tareas_vencidas.map((t) => `<li class="vencida">Tarea ${t.fecha_limite === av.hoy ? "para hoy" : "vencida (" + fechaCorta(t.fecha_limite) + ")"}: ${esc(t.texto)}</li>`)];
   caja.innerHTML = items.length ? `<div class="aviso-trabajo">🔔 <ul>${items.join("")}</ul>
     ${conEnlace ? `<a href="#/trabajo">Ver mi trabajo PT/AL</a>` : ""}</div>` : "";
+}
+
+// ======================================================================= reuniones (notas → tareas pendientes)
+// Cada reunión es una cita de Mi trabajo con sus notas. Se escribe una idea por línea y
+// cualquier línea pasa a tareas pendientes con un clic o con Ctrl + Enter.
+let FILTRO_REUNION = "";
+const BOTONES_REUNION = [["tutoria_familia", "👪 Familia"], ["reunion_orientacion", "🧭 Orientación"],
+  ["reunion_profesores", "👩‍🏫 Profesores"], ["reunion_terapeutas", "🩺 Terapeutas"], ["otra", "＋ Otra"]];
+const normLinea = (s) => (s || "").replace(/^\s*(?:[-*•·▪◦→>]+|\d{1,2}[.)]|\[\s?[xX]?\s?\]|☐|☑)\s*/, "").trim();
+const claveLinea = (s) => normLinea(s).toLowerCase().replace(/\s+/g, " ");
+function horaAhora() { const d = new Date(); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; }
+
+async function nuevaReunion(tipo, extra = {}) {
+  const r = await api("POST", "/api/citas", { fecha: hoyISO(), hora_inicio: horaAhora(), tipo, ...extra });
+  location.hash = `#/reunion/${r.id}`;
+}
+
+function htmlFilaReunion(r) {
+  const primera = (r.notas || "").split("\n").map(normLinea).find(Boolean) || "";
+  return `<a class="reunion-fila ${r.hecha ? "hecha" : ""}" href="#/reunion/${r.id}">
+    <span class="rf-fecha">${fechaCorta(r.fecha)}<small>${r.hora_inicio || ""}</small></span>
+    <span class="rf-cuerpo"><span class="cita ${r.tipo}">${esc(TRABAJO.tipos_cita[r.tipo] || r.tipo)}</span>
+      <strong>${esc([r.alumno, r.con_quien].filter(Boolean).join(" · "))}</strong>
+      <span class="rf-notas">${esc(primera) || '<span class="muted">Sin notas</span>'}</span></span>
+    ${r.tareas_pendientes ? `<span class="chip pendientes">📌 ${r.tareas_pendientes} pendiente${r.tareas_pendientes > 1 ? "s" : ""}</span>`
+      : r.tareas_total ? `<span class="chip">✔ Tareas hechas</span>` : ""}</a>`;
+}
+
+// Lista de tareas (de una reunión o de todas): tic, fecha límite, borrar y enlace a su reunión
+function htmlListaTareasReunion(tareas, conReunion) {
+  const hoy = hoyISO();
+  if (!tareas.length) return `<div class="vacio" style="padding:16px">${conReunion ? "¡Nada pendiente de tus reuniones! 🎉"
+    : "Todavía no hay tareas. Pasa líneas de las notas con ➕ o con Ctrl + Enter."}</div>`;
+  return `<ul class="lista-tareas">${tareas.map((t) => `<li class="tarea ${t.hecha ? "hecha" : ""} ${!t.hecha && t.fecha_limite && t.fecha_limite < hoy ? "vencida" : ""}">
+    <input type="checkbox" data-rt-hecha="${t.id}" ${t.hecha ? "checked" : ""} title="${t.hecha ? "Marcar como pendiente" : "Marcar como hecha"}">
+    <div class="tarea-texto">${esc(t.texto)}
+      <div class="tarea-meta">${t.alumno ? `<span class="muted">👧 ${esc(t.alumno)}</span>` : ""}
+        ${conReunion && t.cita_id ? `<a href="#/reunion/${t.cita_id}" class="enlace-reunion">🤝 ${esc(TRABAJO.tipos_cita[t.cita_tipo] || "Reunión")} · ${fechaCorta(t.cita_fecha)}</a>` : ""}
+        <label class="fecha-limite" title="Fecha límite (opcional)">📅 <input type="date" data-rt-fecha="${t.id}" value="${esc(t.fecha_limite || "")}"></label></div></div>
+    <button class="icono" data-rt-borrar="${t.id}" title="Borrar tarea">✕</button></li>`).join("")}</ul>`;
+}
+function enlazarTareasReunion(raiz, recargar) {
+  $$("[data-rt-hecha]", raiz).forEach((c) => c.onchange = () => intentar(async () => {
+    await api("PATCH", `/api/tareas/${c.dataset.rtHecha}`, { hecha: c.checked });
+    if (c.checked) aviso("¡Tarea hecha! ✔");
+    await recargar();
+  }));
+  $$("[data-rt-fecha]", raiz).forEach((i) => i.onchange = () => intentar(async () => {
+    await api("PATCH", `/api/tareas/${i.dataset.rtFecha}`, { fecha_limite: i.value || null });
+    aviso(i.value ? "Fecha límite guardada" : "Fecha límite quitada");
+    await recargar();
+  }));
+  $$("[data-rt-borrar]", raiz).forEach((b) => b.onclick = () => intentar(async () => {
+    if (!confirm("¿Borrar esta tarea?")) return;
+    await api("DELETE", `/api/tareas/${b.dataset.rtBorrar}`);
+    await recargar();
+  }));
+}
+
+async function vistaReuniones() {
+  await infoTrabajo();
+  const [lista, alumnos] = await Promise.all([
+    api("GET", `/api/reuniones${FILTRO_REUNION ? "?tipo=" + FILTRO_REUNION : ""}`), api("GET", "/api/alumnos")]);
+  const hoy = hoyISO();
+  const proximas = lista.filter((r) => r.fecha > hoy).reverse();
+  const deHoy = lista.filter((r) => r.fecha === hoy).reverse();
+  const pasadas = lista.filter((r) => r.fecha < hoy);
+  const bloque = (titulo, rs) => rs.length ? `<h3 class="rf-titulo">${titulo}</h3><div class="lista-reuniones">${rs.map(htmlFilaReunion).join("")}</div>` : "";
+  vista.innerHTML = `
+    <div class="cabecera"><div><h1>Reuniones</h1>
+      <p class="sub">Toma notas en la reunión y pasa cada cosa que tengas que hacer a tareas pendientes.</p></div></div>
+    <div class="tarjeta nueva-reunion"><h2>Empezar una reunión ahora</h2>
+      <div class="fila" style="gap:8px;flex-wrap:wrap">
+        ${BOTONES_REUNION.map(([k, t]) => `<button class="${k === "otra" ? "" : "primario"}" data-nueva-reunion="${k}">${t}</button>`).join("")}
+        <select id="nr-alumno" style="width:auto"><option value="">Sin alumno</option>${alumnos.map((al) => `<option value="${al.id}">${esc(al.nombre)}</option>`).join("")}</select></div>
+      <p class="muted" style="margin:8px 0 0">Se crea con la fecha y la hora de ahora y aparece también en el calendario de Mi trabajo PT/AL.
+        Para una reunión futura, créala y cambia la fecha.</p></div>
+    <div class="trabajo-grid">
+      <div class="tarjeta"><h2>Tareas pendientes de reuniones</h2><div id="rt-todas"></div>
+        <p class="muted" style="margin:10px 0 0">Todas tus tareas (también las que no salen de reuniones) están en <a href="#/trabajo">Mi trabajo PT/AL</a>.</p></div>
+      <div class="tarjeta"><div class="filtros"><button class="mini ${FILTRO_REUNION ? "" : "activo"}" data-filtro-reunion="">Todas</button>
+          ${Object.entries(TRABAJO.tipos_cita).map(([k, t]) => `<button class="mini ${FILTRO_REUNION === k ? "activo" : ""}" data-filtro-reunion="${k}">${esc(t)}</button>`).join("")}</div>
+        ${lista.length ? bloque("Hoy", deHoy) + bloque("Próximas", proximas) + bloque("Anteriores", pasadas)
+          : `<div class="vacio">${FILTRO_REUNION ? "No hay reuniones de este tipo." : "Todavía no hay reuniones. Pulsa uno de los botones de arriba para empezar."}</div>`}</div>
+    </div>`;
+  const pintarPendientes = async () => {
+    const tareas = (await api("GET", "/api/tareas")).filter((t) => t.cita_id && !t.hecha);
+    $("#rt-todas").innerHTML = htmlListaTareasReunion(tareas, true);
+    enlazarTareasReunion($("#rt-todas"), pintarPendientes);
+  };
+  await pintarPendientes();
+  $$("[data-nueva-reunion]").forEach((b) => b.onclick = () => intentar(() =>
+    nuevaReunion(b.dataset.nuevaReunion, { alumno_id: $("#nr-alumno").value || null })));
+  $$("[data-filtro-reunion]").forEach((b) => b.onclick = () => { FILTRO_REUNION = b.dataset.filtroReunion; vistaReuniones(); });
+}
+
+// Guardado de las notas mientras se escribe (y antes de salir de la pantalla)
+let GUARDAR_NOTAS = null;
+window.addEventListener("hashchange", () => { if (GUARDAR_NOTAS) GUARDAR_NOTAS(); });
+
+async function vistaReunion(id) {
+  await infoTrabajo();
+  const [r, alumnos] = await Promise.all([api("GET", `/api/reuniones/${id}`), api("GET", "/api/alumnos")]);
+  let tareas = r.tareas;
+  vista.innerHTML = `
+    <div class="migas"><a href="#/reuniones">Reuniones</a> › ${fechaCorta(r.fecha)}/${r.fecha.slice(0, 4)}</div>
+    <div class="cabecera"><div><h1 id="r-titulo"></h1><p class="sub" id="r-sub"></p></div>
+      <div class="acciones"><label class="fila" style="gap:6px;font-size:14px;color:var(--texto);margin:0">
+          <input type="checkbox" id="r-hecha" style="width:auto" ${r.hecha ? "checked" : ""}> Reunión terminada</label>
+        <button class="peligro" id="r-borrar">Borrar reunión</button></div></div>
+    <details class="tarjeta reunion-datos" ${r.alumno_id || r.con_quien ? "" : "open"}><summary><strong>Datos de la reunión</strong>
+        <span class="muted">(fecha, tipo, alumno, con quién…)</span></summary>
+      <div class="campos" style="margin-top:12px">
+        <div><label>Fecha</label><input type="date" data-r="fecha" value="${esc(r.fecha)}"></div>
+        <div><label>Hora de inicio</label><input type="time" data-r="hora_inicio" value="${esc(r.hora_inicio)}"></div>
+        <div><label>Hora de fin</label><input type="time" data-r="hora_fin" value="${esc(r.hora_fin || "")}"></div>
+        <div><label>Tipo</label><select data-r="tipo">${Object.entries(TRABAJO.tipos_cita).map(([k, t]) => `<option value="${k}" ${k === r.tipo ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></div>
+        <div><label>Alumno (opcional)</label><select data-r="alumno_id"><option value="">Sin alumno</option>
+          ${alumnos.map((al) => `<option value="${al.id}" ${al.id === r.alumno_id ? "selected" : ""}>${esc(al.nombre)}</option>`).join("")}</select></div>
+        <div><label>Con quién</label><input data-r="con_quien" value="${esc(r.con_quien)}" placeholder="Familia, orientadora, tutora…"></div>
+        <div><label>Lugar</label><input data-r="lugar" value="${esc(r.lugar)}" placeholder="Aula de PT, videollamada…"></div>
+      </div></details>
+    <div class="reunion-grid">
+      <div class="tarjeta"><div class="fila" style="gap:10px;margin-bottom:8px"><h2 style="margin:0">Notas</h2><span class="muted" id="r-estado"></span>
+          <span style="margin-left:auto">${botonMicro("r-notas")}</span></div>
+        <p class="ayuda">Escribe una idea por línea. Para pasar a tareas la línea en la que estás, pulsa <code>Ctrl</code> + <code>Enter</code>,
+          o usa el botón <strong>➕ Tarea</strong> de cada línea. El micrófono 🎤 escribe en una línea nueva.</p>
+        <textarea id="r-notas" data-micro-lineas rows="14" placeholder="- La familia cuenta que…&#10;- Acordamos…&#10;- Pedir informe a…">${esc(r.notas)}</textarea>
+        <h3 class="rf-titulo">Líneas de las notas</h3><ul class="lineas-reunion" id="r-lineas"></ul></div>
+      <div class="tarjeta"><h2>Tareas de esta reunión</h2>
+        <div class="fila" style="gap:6px;margin-bottom:8px"><input id="rt-texto" placeholder="Otra tarea que no esté en las notas…" style="flex:1">
+          <button class="primario" id="rt-anadir">＋ Añadir</button></div>
+        <div id="rt-lista"></div>
+        <p class="muted" style="margin:10px 0 0">Aparecen también en <a href="#/trabajo">Mi trabajo PT/AL</a>, con el resto de tareas.</p></div>
+    </div>`;
+  enlazarMicros(vista);
+  const ta = $("#r-notas");
+  const ajustar = () => { ta.style.height = "auto"; ta.style.height = Math.max(260, ta.scrollHeight + 2) + "px"; };
+  requestAnimationFrame(ajustar);
+
+  const pintarCabecera = () => {
+    $("#r-titulo").textContent = TRABAJO.tipos_cita[r.tipo] || "Reunión";
+    const al = alumnos.find((x) => x.id === r.alumno_id);
+    $("#r-sub").textContent = [mayus(fechaLarga(r.fecha)) + (r.hora_inicio ? ", " + r.hora_inicio : ""),
+      al && al.nombre, r.con_quien].filter(Boolean).join(" · ");
+  };
+  let pintado = null;  // texto y tareas con los que se pintó la lista de líneas
+  const pintarLineas = (forzar = false) => {
+    const clave = ta.value + "\u0000" + tareas.map((t) => t.texto).join("\u0000");
+    // Al salir del cuadro (evento change) no se repinta si nada cambió: así el clic en «➕ Tarea» no se pierde
+    if (!forzar && clave === pintado) return;
+    pintado = clave;
+    const hechas = new Set(tareas.map((t) => claveLinea(t.texto)));
+    const lineas = ta.value.split("\n").map((l, i) => [i, l]).filter(([, l]) => normLinea(l));
+    $("#r-lineas").innerHTML = lineas.length ? lineas.map(([i, l]) => {
+      const ya = hechas.has(claveLinea(l));
+      return `<li class="${ya ? "ya-tarea" : ""}"><span>${esc(normLinea(l))}</span>${ya ? `<span class="chip">✔ Es tarea</span>`
+        : `<button class="mini" data-linea="${i}" title="Pasar esta línea a tareas pendientes">➕ Tarea</button>`}</li>`;
+    }).join("") : `<li class="muted">Aquí aparecerá cada línea que escribas, con su botón para pasarla a tareas.</li>`;
+    $$("[data-linea]").forEach((b) => b.onclick = () => intentar(() => lineaATarea(Number(b.dataset.linea))));
+  };
+  const pintarTareasReunion = () => {
+    $("#rt-lista").innerHTML = htmlListaTareasReunion(tareas, false);
+    enlazarTareasReunion($("#rt-lista"), recargarTareas);
+  };
+  const recargarTareas = async () => {
+    tareas = (await api("GET", `/api/reuniones/${id}`)).tareas;
+    pintarTareasReunion();
+    pintarLineas();
+  };
+
+  // Guardado automático de las notas
+  let temporizador = null, guardado = r.notas;
+  const guardarNotas = async () => {
+    clearTimeout(temporizador);
+    if (ta.value === guardado) return;
+    const valor = ta.value;
+    await api("PATCH", `/api/citas/${id}`, { notas: valor });
+    guardado = valor;
+    if ($("#r-estado") && ta.isConnected) $("#r-estado").textContent = "Guardado ✔";
+  };
+  GUARDAR_NOTAS = () => { if (ta.value !== guardado) guardarNotas().catch(() => aviso("No se han podido guardar las notas", true)); GUARDAR_NOTAS = null; };
+  ta.oninput = () => {
+    ajustar();
+    $("#r-estado").textContent = "Guardando…";
+    clearTimeout(temporizador);
+    temporizador = setTimeout(() => intentar(guardarNotas), 800);
+    pintarLineas();
+  };
+  ta.onchange = () => { ajustar(); pintarLineas(); intentar(guardarNotas); };
+
+  // Pasa la línea «i» de las notas a tareas y la marca con ☑ en el texto
+  const lineaATarea = async (i) => {
+    const lineas = ta.value.split("\n");
+    const texto = normLinea(lineas[i]);
+    if (!texto) { aviso("Esa línea está vacía"); return; }
+    if (tareas.some((t) => claveLinea(t.texto) === claveLinea(texto))) { aviso("Esa línea ya es una tarea"); return; }
+    await api("POST", `/api/reuniones/${id}/tareas`, { texto });
+    lineas[i] = "☑ " + texto;
+    const pos = ta.selectionStart;
+    const antes = ta.value.length;
+    ta.value = lineas.join("\n");
+    ajustar();
+    ta.selectionStart = ta.selectionEnd = Math.max(0, pos + ta.value.length - antes);
+    aviso("Pasada a tareas pendientes ✔");
+    await guardarNotas();
+    await recargarTareas();
+  };
+  ta.onkeydown = (e) => {
+    if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const pos = ta.selectionStart;
+    const i = ta.value.slice(0, pos).split("\n").length - 1;
+    intentar(async () => {
+      await lineaATarea(i);
+      // Si estaba al final de la línea, sigue escribiendo en una nueva
+      const v = ta.value, p = ta.selectionStart;
+      const fin = v.indexOf("\n", p);
+      if (fin === -1) { ta.value = v + "\n"; ta.selectionStart = ta.selectionEnd = ta.value.length; }
+      else if (v.slice(p, fin).trim() === "") { ta.selectionStart = ta.selectionEnd = fin + 1; }
+      ta.focus();
+    });
+  };
+
+  // Datos de la reunión
+  $$("[data-r]").forEach((el) => el.onchange = () => intentar(async () => {
+    const campo = el.dataset.r;
+    const valor = campo === "alumno_id" ? (el.value ? Number(el.value) : null) : el.value;
+    await api("PATCH", `/api/citas/${id}`, { [campo]: valor });
+    r[campo] = valor;
+    pintarCabecera();
+    aviso("Guardado");
+  }));
+  $("#r-hecha").onchange = () => intentar(async () => {
+    await api("PATCH", `/api/citas/${id}`, { hecha: $("#r-hecha").checked });
+    aviso($("#r-hecha").checked ? "Reunión marcada como terminada" : "Reunión marcada como pendiente");
+  });
+  $("#r-borrar").onclick = () => intentar(async () => {
+    const msg = tareas.length ? `¿Borrar esta reunión y sus notas? Sus ${tareas.length} tareas se quedan en Mi trabajo PT/AL.`
+      : "¿Borrar esta reunión y sus notas?";
+    if (!confirm(msg)) return;
+    GUARDAR_NOTAS = null;
+    await api("DELETE", `/api/citas/${id}`);
+    location.hash = "#/reuniones";
+  });
+  const anadir = () => intentar(async () => {
+    const texto = $("#rt-texto").value.trim();
+    if (!texto) { $("#rt-texto").focus(); return; }
+    await api("POST", `/api/reuniones/${id}/tareas`, { texto });
+    $("#rt-texto").value = "";
+    await recargarTareas();
+    $("#rt-texto").focus();
+  });
+  $("#rt-anadir").onclick = anadir;
+  $("#rt-texto").onkeydown = (e) => { if (e.key === "Enter") anadir(); };
+
+  pintarCabecera();
+  pintarTareasReunion();
+  pintarLineas();
+  if (!r.notas) ta.focus();
 }
 
 // ======================================================================= crear material

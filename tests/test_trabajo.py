@@ -115,3 +115,65 @@ def test_datos_por_dia_y_por_semana(tmp_path):
 def test_rango_mes():
     assert trabajo.rango_mes("2026-02") == ("2026-01-26", "2026-03-01")
     assert trabajo.rango_mes("2026-12") == ("2026-11-30", "2027-01-03")
+
+
+def test_reunion_con_notas_y_lineas_a_tareas(tmp_path):
+    c, h = _cliente(tmp_path)
+    al = c.post("/api/alumnos", json={"nombre": "Alumno Prueba"}, headers=h).get_json()["id"]
+    rid = c.post("/api/citas", json={"fecha": "2026-11-17", "hora_inicio": "13:00", "tipo": "reunion_orientacion",
+                                     "alumno_id": al, "con_quien": "Orientadora"}, headers=h).get_json()["id"]
+    otra = c.post("/api/citas", json={"fecha": "2026-11-18", "tipo": "tutoria_familia"}, headers=h).get_json()["id"]
+    c.post("/api/citas", json={"fecha": "2026-11-19", "tipo": "reunion_profesores"}, headers=h)
+    notas = "Revisar el ACI\n- Pedir informe a la logopeda\n2. Preparar pictogramas"
+    assert c.patch(f"/api/citas/{rid}", json={"notas": notas}, headers=h).status_code == 200
+    # Cada línea pasa a tarea sin la viñeta, con el alumno y la categoría de la reunión
+    t1 = c.post(f"/api/reuniones/{rid}/tareas", json={"texto": "- Pedir informe a la logopeda"}, headers=h).get_json()["id"]
+    c.post(f"/api/reuniones/{rid}/tareas", json={"texto": "2. Preparar pictogramas", "fecha_limite": "2026-11-20"}, headers=h)
+    c.post(f"/api/reuniones/{otra}/tareas", json={"texto": "☐ Enviar correo a la familia"}, headers=h)
+    assert c.post(f"/api/reuniones/{rid}/tareas", json={"texto": " - "}, headers=h).status_code == 400
+    r = c.get(f"/api/reuniones/{rid}", headers=h).get_json()
+    assert r["notas"] == notas and r["alumno"] == "Alumno Prueba"
+    assert [t["texto"] for t in r["tareas"]] == ["Pedir informe a la logopeda", "Preparar pictogramas"]
+    assert {t["categoria"] for t in r["tareas"]} == {"reunion"} and {t["alumno_id"] for t in r["tareas"]} == {al}
+    tareas = c.get("/api/tareas", headers=h).get_json()
+    fam = next(t for t in tareas if t["cita_id"] == otra)
+    assert fam["texto"] == "Enviar correo a la familia" and fam["categoria"] == "tutoria" and fam["cita_tipo"] == "tutoria_familia"
+    # Lista de reuniones (más recientes primero), con recuento y filtros
+    lista = c.get("/api/reuniones", headers=h).get_json()
+    assert [x["fecha"] for x in lista] == ["2026-11-19", "2026-11-18", "2026-11-17"]
+    assert next(x for x in lista if x["id"] == rid)["tareas_pendientes"] == 2
+    c.patch(f"/api/tareas/{t1}", json={"hecha": True}, headers=h)
+    orient = c.get("/api/reuniones?tipo=reunion_orientacion", headers=h).get_json()
+    assert [(x["id"], x["tareas_total"], x["tareas_pendientes"]) for x in orient] == [(rid, 2, 1)]
+    assert [x["id"] for x in c.get(f"/api/reuniones?alumno_id={al}", headers=h).get_json()] == [rid]
+    # Otro perfil no ve la reunión ni puede colgarle tareas
+    otro = {"X-Usuario": str(c.post("/api/usuarios", json={"nombre": "Otra"}).get_json()["id"])}
+    assert c.get(f"/api/reuniones/{rid}", headers=otro).status_code == 400
+    assert c.post(f"/api/reuniones/{rid}/tareas", json={"texto": "x"}, headers=otro).status_code == 400
+    # Al borrar la reunión, sus tareas siguen pendientes
+    c.delete(f"/api/citas/{rid}", headers=h)
+    assert len(c.get("/api/tareas", headers=h).get_json()) == 3
+
+
+def test_migracion_tareas_cita_id(tmp_path):
+    ruta = tmp_path / "v12.db"
+    con = sqlite3.connect(ruta)
+    con.executescript("""
+        CREATE TABLE tareas (id INTEGER PRIMARY KEY, usuario_id INTEGER, texto TEXT NOT NULL DEFAULT '',
+            categoria TEXT NOT NULL DEFAULT 'otros', alumno_id INTEGER, fecha_limite TEXT, hecha INTEGER NOT NULL DEFAULT 0,
+            hecha_en TEXT, orden INTEGER NOT NULL DEFAULT 0, creada TEXT DEFAULT CURRENT_TIMESTAMP);
+        INSERT INTO tareas(texto) VALUES ('Tarea antigua');
+    """)
+    con.close()
+    conn = db.connect(ruta)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(tareas)")}
+    assert "cita_id" in cols
+    assert conn.execute("SELECT texto, cita_id FROM tareas").fetchone()[:] == ("Tarea antigua", None)
+
+
+def test_limpiar_linea():
+    assert trabajo.limpiar_linea("  - Llamar a la familia ") == "Llamar a la familia"
+    assert trabajo.limpiar_linea("• Revisar ACI") == "Revisar ACI"
+    assert trabajo.limpiar_linea("[ ] Pedir cita") == "Pedir cita"
+    assert trabajo.limpiar_linea("12) Preparar") == "Preparar"
+    assert trabajo.limpiar_linea("2026 objetivos") == "2026 objetivos"

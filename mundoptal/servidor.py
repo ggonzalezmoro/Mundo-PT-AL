@@ -142,6 +142,20 @@ def crear_app(db_path: str | Path) -> Flask:
     def crear_cita():
         return jsonify(id=trabajo.crear_cita(store, usuario_actual(), cuerpo()))
 
+    @app.get("/api/reuniones")
+    def reuniones():
+        a = request.args
+        return jsonify(trabajo.listar_reuniones(store, usuario_actual(), a.get("tipo", ""), a.get("alumno_id", type=int)))
+
+    @app.get("/api/reuniones/<int:id_>")
+    def reunion(id_):
+        return jsonify(trabajo.obtener_reunion(store, usuario_actual(), id_))
+
+    @app.post("/api/reuniones/<int:id_>/tareas")
+    def reunion_tarea(id_):
+        """Pasa una línea de las notas de la reunión a tareas pendientes."""
+        return jsonify(id=trabajo.crear_tarea(store, usuario_actual(), {**cuerpo(), "cita_id": id_}))
+
     @app.get("/api/avisos")
     def avisos():
         return jsonify(trabajo.avisos(store, usuario_actual()))
