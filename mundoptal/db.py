@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS alumnos (
     observaciones TEXT DEFAULT '',
     activo INTEGER NOT NULL DEFAULT 1,
     usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
-    creado TEXT DEFAULT CURRENT_TIMESTAMP
+    creado TEXT DEFAULT CURRENT_TIMESTAMP,
+    -- 'aci': con Adaptación Curricular; 'observacion': en valoración, sin ACI (informe de observación)
+    seguimiento TEXT NOT NULL DEFAULT 'aci' CHECK (seguimiento IN ('aci', 'observacion'))
 );
 
 -- Una ACI por alumno y trimestre/curso. La más reciente es la "vigente".
@@ -101,7 +103,9 @@ CREATE TABLE IF NOT EXISTS franjas (
     etiqueta TEXT DEFAULT '',
     especialidad TEXT NOT NULL DEFAULT 'PT/AL' CHECK (especialidad IN ('PT', 'AL', 'PT/AL')),
     items_por_sesion INTEGER NOT NULL DEFAULT 3,
-    usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE
+    usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+    -- Franja que ya no está en el horario: se guarda solo para conservar las sesiones pasadas y sus notas
+    archivada INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS franja_alumnos (
@@ -157,6 +161,31 @@ CREATE TABLE IF NOT EXISTS informe_areas (
     id INTEGER PRIMARY KEY,
     informe_id INTEGER NOT NULL REFERENCES informes(id) ON DELETE CASCADE,
     area TEXT NOT NULL DEFAULT '',
+    texto TEXT DEFAULT '',
+    orden INTEGER NOT NULL DEFAULT 0
+);
+
+-- Informe de observación: alumnos sin ACI (en valoración) y cómo se muestran en las sesiones
+CREATE TABLE IF NOT EXISTS informes_observacion (
+    id INTEGER PRIMARY KEY,
+    alumno_id INTEGER NOT NULL REFERENCES alumnos(id) ON DELETE CASCADE,
+    titulo TEXT NOT NULL DEFAULT 'INFORME DE OBSERVACIÓN',
+    curso TEXT DEFAULT '',
+    curso_escolar TEXT NOT NULL DEFAULT '',
+    fecha TEXT NOT NULL DEFAULT '',        -- fecha del informe (AAAA-MM-DD)
+    desde TEXT NOT NULL DEFAULT '',        -- periodo observado
+    hasta TEXT NOT NULL DEFAULT '',        -- vacío: hasta hoy
+    maestra TEXT DEFAULT '',
+    destinatario TEXT DEFAULT '',          -- p. ej. Departamento de Orientación
+    creado TEXT DEFAULT CURRENT_TIMESTAMP,
+    actualizado TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS observacion_apartados (
+    id INTEGER PRIMARY KEY,
+    informe_id INTEGER NOT NULL REFERENCES informes_observacion(id) ON DELETE CASCADE,
+    clave TEXT NOT NULL DEFAULT '',
+    titulo TEXT NOT NULL DEFAULT '',
     texto TEXT DEFAULT '',
     orden INTEGER NOT NULL DEFAULT 0
 );
@@ -243,6 +272,8 @@ CREATE INDEX IF NOT EXISTS ix_citas_fecha ON citas(usuario_id, fecha);
 CREATE INDEX IF NOT EXISTS ix_acis_alumno ON acis(alumno_id);
 CREATE INDEX IF NOT EXISTS ix_informes_alumno ON informes(alumno_id);
 CREATE INDEX IF NOT EXISTS ix_infareas_informe ON informe_areas(informe_id);
+CREATE INDEX IF NOT EXISTS ix_infobs_alumno ON informes_observacion(alumno_id);
+CREATE INDEX IF NOT EXISTS ix_obsap_informe ON observacion_apartados(informe_id);
 CREATE INDEX IF NOT EXISTS ix_alumnos_usuario ON alumnos(usuario_id);
 CREATE INDEX IF NOT EXISTS ix_franjas_usuario ON franjas(usuario_id);
 CREATE INDEX IF NOT EXISTS ix_areas_aci ON areas(aci_id);
@@ -276,6 +307,15 @@ def _migrar(conn: sqlite3.Connection) -> None:
             cols = {r[1] for r in conn.execute(f"PRAGMA table_info({tabla})")}
             if "usuario_id" not in cols:
                 conn.execute(f"ALTER TABLE {tabla} ADD COLUMN usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE")
+    if "alumnos" in tablas:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(alumnos)")}
+        if "seguimiento" not in cols:
+            conn.execute("ALTER TABLE alumnos ADD COLUMN seguimiento TEXT NOT NULL DEFAULT 'aci' "
+                         "CHECK (seguimiento IN ('aci', 'observacion'))")
+    if "franjas" in tablas:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(franjas)")}
+        if "archivada" not in cols:
+            conn.execute("ALTER TABLE franjas ADD COLUMN archivada INTEGER NOT NULL DEFAULT 0")
     if "items" in tablas:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(items)")}
         if "nota" not in cols:

@@ -486,3 +486,14 @@ pre.codigo { background: #f4f6f3; border: 1px solid var(--borde); border-radius:
 .tarea-meta label.fecha-limite { display: inline-flex; gap: 4px; align-items: center; margin: 0; font-size: 12px; }
 .tarea-meta label.fecha-limite input { width: auto; padding: 1px 4px; font-size: 12px; }
 .notas-cita { margin: 2px 0 0 4px; white-space: pre-line; }
+
+/* Alumnos en valoración, sin ACI (informe de observación) */
+.chip.valoracion { background: #e8eefc; color: #2b4c9b; }
+.tarjeta.alumno.en-valoracion { border-left: 4px solid #8aa4e6; }
+.seccion-alumnos { margin: 26px 0 4px; color: var(--verde); }
+label.check { display: inline-flex; align-items: center; gap: 6px; font-weight: normal; cursor: pointer; }
+label.check input { width: auto; margin: 0; }
+.apartado-obs .titulo-area { flex: 1; font-weight: 700; }
+.frases-sesion { margin-top: 4px; }
+.frases-sesion .frases { margin-top: 4px; }
+label.check[hidden] { display: none; }

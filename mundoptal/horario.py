@@ -10,8 +10,13 @@ Formato esperado (el habitual en el colegio, exportado de Google Sheets o Excel)
 * La primera columna lleva la franja horaria («9:00-10:00» o «11.00-11.30»).
 * Cada celda puede tener uno o varios alumnos separados por «/», «,» o «y».
   Un «?» marca la sesión como pendiente de confirmar.
-* Celdas como PATIO, COMEDOR, TIEMPO DE TRABAJO o DEPARTAMENTO DE ORIENTACIÓN
-  se guardan como «otra tarea» (no se planifican ítems en ellas).
+* Celdas como PATIO, COMEDOR, TIEMPO DE TRABAJO, DEPARTAMENTO DE ORIENTACIÓN o
+  PRUEBAS DE LENGUAJE se guardan como «otra tarea» (no se planifican ítems en ellas).
+* «MARIO.L» se entiende como un alumno llamado Mario cuyo apellido empieza por L.
+
+Al actualizar el horario (`reemplazar`), las franjas que siguen igual conservan su
+historia, y las que desaparecen se archivan si tienen sesiones pasadas: las notas,
+la asistencia y las observaciones de la agenda nunca se pierden.
 """
 from __future__ import annotations
 
@@ -27,7 +32,7 @@ DIAS = {"lunes": 0, "martes": 1, "miercoles": 2, "jueves": 3, "viernes": 4}
 PALABRAS_NO_ALUMNO = (
     "patio", "recreo", "comedor", "tiempo de trabajo", "departamento", "orientacion",
     "reunion", "coordinacion", "guardia", "exclusiva", "claustro", "tutoria", "libre",
-    "evaluacion", "preparacion", "biblioteca",
+    "evaluacion", "preparacion", "biblioteca", "prueba", "valoracion",
 )
 
 _HORA = re.compile(r"(\d{1,2})[:.,h](\d{2})\s*[-–a]\s*(\d{1,2})[:.,h](\d{2})")
@@ -113,26 +118,154 @@ def analizar_tabla(filas: list[list[str]]) -> list[dict]:
     return franjas
 
 
-def importar_horario(store: Store, plan, usuario_id: int, franjas: list[dict],
-                     reemplazar: bool = False) -> dict:
-    """Guarda las franjas en el horario del usuario creando los alumnos que falten.
-    Con `reemplazar` se borra antes su horario actual (y las sesiones asociadas)."""
-    res = {"franjas": 0, "alumnos_nuevos": [], "omitidas": []}
-    if reemplazar:
-        with store.tx() as c:
-            c.execute("DELETE FROM franjas WHERE usuario_id = ?", (usuario_id,))
+# ----------------------------------------------------------------------- alumnos de la hoja
+def nombres_del_horario(franjas: list[dict]) -> list[str]:
+    """Nombres distintos que aparecen en las sesiones, en orden de aparición."""
+    vistos: dict[str, str] = {}
     for f in franjas:
-        ids = []
-        for nombre in f["alumnos"]:
-            al = store.buscar_alumno(nombre, usuario_id)
-            if al:
-                ids.append(al["id"])
-            else:
-                ids.append(store.crear_alumno(nombre, usuario_id=usuario_id))
-                res["alumnos_nuevos"].append(nombre)
+        for n in f["alumnos"]:
+            vistos.setdefault(normalizar(n), n)
+    return list(vistos.values())
+
+
+def _palabras(texto: str) -> list[str]:
+    return [p for p in re.split(r"[.\s]+", normalizar(texto)) if p]
+
+
+def candidatos(nombre: str, alumnos: list[dict]) -> list[dict]:
+    """Alumnos del perfil que pueden ser el «nombre» escrito en el horario.
+    Admite el nombre completo, solo el nombre de pila («MARIO» → Mario P. G.)
+    y la inicial del apellido («MARIO.L» → Mario L…)."""
+    partes = _palabras(nombre)
+    if not partes:
+        return []
+    exactos = [a for a in alumnos if _palabras(a["nombre"]) == partes]
+    if exactos:
+        return exactos
+    res = []
+    for a in alumnos:
+        pa = _palabras(a["nombre"])
+        if pa[:len(partes)] == partes:
+            res.append(a)
+        elif len(partes) >= 2 and len(partes[-1]) <= 2 and pa[:len(partes) - 1] == partes[:-1] \
+                and any(w.startswith(partes[-1]) for w in pa[len(partes) - 1:]):
+            res.append(a)
+    return res
+
+
+def proponer_alumnos(store: Store, plan, usuario_id: int, franjas: list[dict]) -> list[dict]:
+    """Para cada nombre del horario propone el alumno de la app (o crear uno nuevo).
+    Si hay varios posibles, se elige el que más sesiones tiene en el horario actual."""
+    alumnos = store.listar_alumnos(usuario_id, incluir_inactivos=True)
+    usos: dict[int, int] = {}
+    for f in plan.listar_franjas(usuario_id):
+        for a in f["alumnos"]:
+            usos[a["id"]] = usos.get(a["id"], 0) + 1
+    propuestas = []
+    for nombre in nombres_del_horario(franjas):
+        cands = candidatos(nombre, alumnos)
+        cands.sort(key=lambda a: (-usos.get(a["id"], 0), not a["activo"], a["nombre"]))
+        propuestas.append({
+            "texto": nombre,
+            "alumno_id": cands[0]["id"] if cands else None,
+            "candidatos": [{"id": a["id"], "nombre": a["nombre"]} for a in cands],
+            "dudoso": len(cands) > 1,
+            "sesiones": sum(1 for f in franjas if nombre in f["alumnos"]),
+        })
+    return propuestas
+
+
+def _clave(f: dict) -> tuple:
+    return (int(f["dia"]), f["inicio"], f["fin"])
+
+
+def resumen_cambios(plan, usuario_id: int, franjas: list[dict], propuestas: list[dict]) -> dict:
+    """Qué pasará al actualizar el horario: franjas nuevas, cambiadas, iguales y retiradas."""
+    ids = {p["texto"]: p["alumno_id"] for p in propuestas}
+    actuales = {_clave(f): f for f in plan.listar_franjas(usuario_id)}
+    nuevas = cambiadas = iguales = 0
+    for f in franjas:
+        vieja = actuales.get(_clave(f))
+        if not vieja:
+            nuevas += 1
+            continue
+        mismos = sorted(a["id"] for a in vieja["alumnos"]) == sorted(ids.get(n) or -1 for n in f["alumnos"])
+        if mismos and vieja["tipo"] == f["tipo"] and (f["tipo"] == "sesion" or vieja["etiqueta"] == f["etiqueta"]):
+            iguales += 1
+        else:
+            cambiadas += 1
+    claves = {_clave(f) for f in franjas}
+    return {"nuevas": nuevas, "cambiadas": cambiadas, "iguales": iguales,
+            "retiradas": sum(1 for k in actuales if k not in claves)}
+
+
+def importar_horario(store: Store, plan, usuario_id: int, franjas: list[dict],
+                     reemplazar: bool = False, asignacion: dict | None = None,
+                     en_valoracion: list[str] | tuple = ()) -> dict:
+    """Guarda las franjas en el horario del usuario creando los alumnos que falten.
+
+    * `asignacion`: {nombre del horario: id de alumno | "nuevo"}; lo que falte se decide solo.
+    * `en_valoracion`: nombres que, si se crean, son alumnos en valoración (sin ACI).
+    * Con `reemplazar` se actualiza el horario actual: las franjas a la misma hora se
+      modifican (conservando sus sesiones), las que no están en el archivo se retiran
+      (se archivan si tienen sesiones pasadas) y se añaden las nuevas."""
+    res = {"franjas": 0, "nuevas": 0, "actualizadas": 0, "retiradas": 0, "alumnos_nuevos": [], "omitidas": []}
+    asignacion = {normalizar(k): v for k, v in (asignacion or {}).items()}
+    valoracion = {normalizar(n) for n in en_valoracion}
+    propios = {a["id"] for a in store.listar_alumnos(usuario_id, incluir_inactivos=True)}
+    auto = {normalizar(p["texto"]): p["alumno_id"] for p in proponer_alumnos(store, plan, usuario_id, franjas)}
+    resueltos: dict[str, int] = {}
+
+    def alumno_de(nombre: str) -> int:
+        k = normalizar(nombre)
+        if k in resueltos:
+            return resueltos[k]
+        elegido = asignacion.get(k, auto.get(k))
+        if elegido not in (None, "", "nuevo"):
+            elegido = int(elegido)
+            if elegido not in propios:
+                raise StoreError(f"El alumno elegido para «{nombre}» no es de tu perfil")
+        else:
+            elegido = store.crear_alumno(nombre, usuario_id=usuario_id,
+                                         seguimiento="observacion" if k in valoracion else "aci")
+            propios.add(elegido)
+            res["alumnos_nuevos"].append(nombre)
+        resueltos[k] = elegido
+        return elegido
+
+    con_ids = [{**f, "alumnos": list(dict.fromkeys(alumno_de(n) for n in f["alumnos"]))} for f in franjas]
+
+    pendientes = con_ids
+    if reemplazar:
+        actuales = {_clave(f): f for f in plan.listar_franjas(usuario_id)}
+        claves = {_clave(f) for f in con_ids}
+        for k, vieja in actuales.items():
+            if k not in claves:
+                plan.borrar_franja(vieja["id"])
+                res["retiradas"] += 1
+        pendientes = []
+        for f in con_ids:
+            vieja = actuales.get(_clave(f))
+            if not vieja:
+                pendientes.append(f)
+                continue
+            etiqueta = f["etiqueta"]
+            if not etiqueta and f["tipo"] == vieja["tipo"] and vieja["etiqueta"] != "Pendiente de confirmar":
+                etiqueta = vieja["etiqueta"]  # se respeta la descripción que puso la maestra
+            datos = {**f, "etiqueta": etiqueta, "especialidad": vieja["especialidad"],
+                     "items_por_sesion": vieja["items_por_sesion"]}
+            try:
+                plan.guardar_franja(datos, vieja["id"], usuario_id=usuario_id)
+                plan.quitar_alumnos_futuros(vieja["id"], f["alumnos"])
+                res["franjas"] += 1
+                res["actualizadas"] += 1
+            except StoreError as e:
+                res["omitidas"].append(f"{f['inicio']}-{f['fin']} ({e})")
+    for f in pendientes:
         try:
-            plan.guardar_franja({**f, "alumnos": ids}, usuario_id=usuario_id)
+            plan.guardar_franja(f, usuario_id=usuario_id)
             res["franjas"] += 1
+            res["nuevas"] += 1
         except StoreError as e:
             res["omitidas"].append(f"{f['inicio']}-{f['fin']} ({e})")
     res["alumnos_nuevos"] = sorted(set(res["alumnos_nuevos"]))

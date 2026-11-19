@@ -53,9 +53,10 @@ class Planificador:
     # ------------------------------------------------------------ horario
     def listar_franjas(self, usuario_id: int | None = None) -> list[dict]:
         if usuario_id is None:
-            franjas = self.s.q("SELECT * FROM franjas ORDER BY dia, inicio, id")
+            franjas = self.s.q("SELECT * FROM franjas WHERE archivada = 0 ORDER BY dia, inicio, id")
         else:
-            franjas = self.s.q("SELECT * FROM franjas WHERE usuario_id = ? ORDER BY dia, inicio, id", (usuario_id,))
+            franjas = self.s.q("SELECT * FROM franjas WHERE usuario_id = ? AND archivada = 0 ORDER BY dia, inicio, id",
+                               (usuario_id,))
         rel = self.s.q(
             """SELECT fa.franja_id, al.id, al.nombre FROM franja_alumnos fa
                JOIN alumnos al ON al.id = fa.alumno_id ORDER BY al.nombre"""
@@ -92,7 +93,7 @@ class Planificador:
             # Solapes con otras franjas del mismo día
             solape = c.execute(
                 """SELECT id FROM franjas WHERE dia = ? AND inicio < ? AND fin > ? AND id IS NOT ?
-                   AND usuario_id IS ?""",
+                   AND usuario_id IS ? AND archivada = 0""",
                 (dia, fin, inicio, franja_id, usuario_id),
             ).fetchone()
             if solape:
@@ -110,9 +111,41 @@ class Planificador:
                 c.execute("INSERT OR IGNORE INTO franja_alumnos VALUES (?, ?)", (franja_id, a))
         return franja_id
 
-    def borrar_franja(self, franja_id: int) -> None:
+    def borrar_franja(self, franja_id: int) -> str:
+        """Quita una franja del horario sin perder la historia: se borran sus sesiones futuras
+        que aún no tienen nada apuntado y, si quedan sesiones pasadas (con notas, asistencia o
+        ítems trabajados), la franja se archiva en lugar de borrarse. Devuelve 'borrada' o 'archivada'."""
+        hoy = dt.date.today().isoformat()
         with self.s.tx() as c:
+            self._borrar_sesiones_vacias(c, "se.franja_id = ? AND se.fecha >= ?", (franja_id, hoy))
+            queda = c.execute("SELECT 1 FROM sesiones WHERE franja_id = ? LIMIT 1", (franja_id,)).fetchone()
+            if queda:
+                c.execute("UPDATE franjas SET archivada = 1 WHERE id = ?", (franja_id,))
+                c.execute("DELETE FROM franja_alumnos WHERE franja_id = ?", (franja_id,))
+                return "archivada"
             c.execute("DELETE FROM franjas WHERE id = ?", (franja_id,))
+            return "borrada"
+
+    @staticmethod
+    def _borrar_sesiones_vacias(c, condicion: str, params: tuple) -> int:
+        """Borra las sesiones planificadas que no tienen notas, falta ni ítems trabajados u observados."""
+        ids = [r[0] for r in c.execute(
+            f"""SELECT se.id FROM sesiones se WHERE {condicion} AND se.estado = 'planificada'
+                AND TRIM(COALESCE(se.notas, '')) = '' AND se.falta = 0
+                AND NOT EXISTS (SELECT 1 FROM sesion_items si WHERE si.sesion_id = se.id
+                                AND (si.trabajado = 1 OR TRIM(si.observacion) != ''))""", params)]
+        for i in ids:
+            c.execute("DELETE FROM sesiones WHERE id = ?", (i,))
+        return len(ids)
+
+    def quitar_alumnos_futuros(self, franja_id: int, alumnos_que_siguen: list[int]) -> int:
+        """Tras cambiar los alumnos de una franja, borra las sesiones futuras vacías de los que ya no están."""
+        hoy = dt.date.today().isoformat()
+        cond = "se.franja_id = ? AND se.fecha >= ?"
+        if alumnos_que_siguen:
+            cond += f" AND se.alumno_id NOT IN ({','.join('?' * len(alumnos_que_siguen))})"
+        with self.s.tx() as c:
+            return self._borrar_sesiones_vacias(c, cond, (franja_id, hoy, *alumnos_que_siguen))
 
     # ------------------------------------------------------------ ítems pendientes
     def items_pendientes(self, alumno_id: int, especialidad: str = "PT/AL") -> list[dict]:
@@ -243,8 +276,8 @@ class Planificador:
             quedan = {r["item_id"] for r in self.s.q("SELECT item_id FROM sesion_items WHERE sesion_id = ?",
                                                      (existente["id"],))}
             elegidos = [e for e in elegidos if e["id"] not in quedan][:max(0, franja["items_por_sesion"] - len(quedan))]
-        if not elegidos:
-            res["sin_pendientes"].append(alumno["nombre"])
+        if not elegidos and self.s.aci_vigente(alumno["id"]):
+            res["sin_pendientes"].append(alumno["nombre"])  # los alumnos sin ACI no tienen ítems
         with self.s.tx() as c:
             if existente:
                 sesion_id = existente["id"]
@@ -267,7 +300,7 @@ class Planificador:
             params.append(usuario_id)
         sesiones = self.s.q(
             f"""SELECT se.*, f.inicio, f.fin, f.etiqueta, f.especialidad, f.dia,
-                      al.nombre AS alumno, (SELECT MAX(id) FROM acis WHERE alumno_id = al.id) AS aci_id
+                      al.nombre AS alumno, al.seguimiento, (SELECT MAX(id) FROM acis WHERE alumno_id = al.id) AS aci_id
                FROM sesiones se JOIN franjas f ON f.id = se.franja_id
                JOIN alumnos al ON al.id = se.alumno_id
                WHERE se.fecha BETWEEN ? AND ? {filtro} ORDER BY se.fecha, f.inicio, al.nombre""",

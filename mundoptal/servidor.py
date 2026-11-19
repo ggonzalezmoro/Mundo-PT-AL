@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import re
 import sqlite3
@@ -12,7 +13,7 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 from . import (actualizador, biblioteca, calendario, claude_desktop, db as basedatos, dictado, google_drive, horario, ia_material,
-               informes, maqueta, material, mcp_server, trabajo)
+               informes, maqueta, material, mcp_server, observacion, trabajo)
 from .config import APP_NAME, APP_VERSION, COLEGIO, DIAS, ESCALA, ESCALA_TEXTO, data_dir, static_dir
 from .planificador import Planificador, lunes_de
 from .store import Store, StoreError
@@ -103,7 +104,7 @@ def crear_app(db_path: str | Path) -> Flask:
     def crear_alumno():
         d = cuerpo()
         return jsonify(id=store.crear_alumno(d.get("nombre", ""), d.get("curso", ""), d.get("observaciones", ""),
-                                             usuario_actual()))
+                                             usuario_actual(), d.get("seguimiento") or "aci"))
 
     @app.get("/api/alumnos/<int:id_>")
     def alumno(id_):
@@ -556,7 +557,10 @@ def crear_app(db_path: str | Path) -> Flask:
     # ------------------------------------------------------------ informes a familias
     @app.get("/api/informes")
     def informes_resumen():
-        return jsonify(alumnos=informes.resumen_usuario(store, usuario_actual()),
+        alumnos_inf = informes.resumen_usuario(store, usuario_actual())
+        for a in alumnos_inf:
+            a["observaciones"] = observacion.listar(store, a["id"])
+        return jsonify(alumnos=alumnos_inf,
                        trimestre=informes.trimestre_actual(), curso_escolar=informes.curso_escolar_actual())
 
     @app.get("/api/alumnos/<int:alumno_id>/informes")
@@ -604,6 +608,40 @@ def crear_app(db_path: str | Path) -> Flask:
         if not inf:
             return jsonify(error="No encontrado"), 404
         return enviar_docx(informes.nombre_archivo(inf), informes.exportar_word(inf))
+
+    # ------------------------------------------------------------ informes de observación (alumnos sin ACI)
+    @app.post("/api/alumnos/<int:alumno_id>/observaciones")
+    def crear_observacion(alumno_id):
+        uid = usuario_actual()
+        u = store.obtener_usuario(uid) if uid else None
+        return jsonify(id=observacion.crear(store, alumno_id, maestra=(u or {}).get("nombre", "")))
+
+    @app.get("/api/observaciones/<int:informe_id>")
+    def obtener_observacion(informe_id):
+        inf = observacion.obtener(store, informe_id)
+        return (jsonify(inf), 200) if inf else (jsonify(error="No encontrado"), 404)
+
+    @app.post("/api/observaciones/<int:informe_id>/apartados")
+    def observacion_apartado(informe_id):
+        return jsonify(id=observacion.anadir_apartado(store, informe_id, cuerpo().get("titulo", "")))
+
+    @app.get("/api/observaciones/<int:informe_id>/notas")
+    def observacion_notas(informe_id):
+        return jsonify(observacion.notas(store, informe_id))
+
+    @app.get("/api/observaciones/<int:informe_id>/contexto")
+    def observacion_contexto(informe_id):
+        inf = observacion.obtener(store, informe_id)
+        if not inf:
+            return jsonify(error="No encontrado"), 404
+        return jsonify(texto=observacion.contexto_sesiones(store, inf["alumno_id"]))
+
+    @app.get("/api/observaciones/<int:informe_id>/word")
+    def observacion_word(informe_id):
+        inf = observacion.obtener(store, informe_id)
+        if not inf:
+            return jsonify(error="No encontrado"), 404
+        return enviar_docx(observacion.nombre_archivo(inf), observacion.exportar_word(store, inf))
 
     @app.post("/api/importar-word")
     def importar_word():
@@ -665,22 +703,42 @@ def crear_app(db_path: str | Path) -> Flask:
     def editar_franja(id_):
         return jsonify(id=plan.guardar_franja(cuerpo(), id_, usuario_id=usuario_actual()))
 
-    @app.post("/api/horario/importar")
-    def importar_horario():
+    def franjas_del_archivo():
         f = request.files.get("archivo")
         if not f:
             raise StoreError("No se ha recibido ningún archivo")
         uid = usuario_actual()
         if uid is None:
             raise StoreError("Crea primero tu perfil para importar el horario")
-        franjas_leidas = horario.analizar_tabla(horario.leer_tabla(f.filename or "", f.read()))
-        return jsonify(horario.importar_horario(store, plan, uid, franjas_leidas,
-                                                request.form.get("reemplazar") == "1"))
+        return uid, horario.analizar_tabla(horario.leer_tabla(f.filename or "", f.read()))
+
+    @app.post("/api/horario/analizar")
+    def analizar_horario():
+        """Vista previa: qué alumno de la app es cada nombre del horario y qué cambiará."""
+        uid, franjas_leidas = franjas_del_archivo()
+        propuestas = horario.proponer_alumnos(store, plan, uid, franjas_leidas)
+        return jsonify(franjas=franjas_leidas, nombres=propuestas,
+                       cambios=horario.resumen_cambios(plan, uid, franjas_leidas, propuestas),
+                       alumnos=[{"id": a["id"], "nombre": a["nombre"]}
+                                for a in store.listar_alumnos(uid, incluir_inactivos=True)])
+
+    @app.post("/api/horario/importar")
+    def importar_horario():
+        uid, franjas_leidas = franjas_del_archivo()
+        asignacion = json.loads(request.form.get("asignacion") or "{}")
+        en_valoracion = json.loads(request.form.get("en_valoracion") or "[]")
+        res = horario.importar_horario(store, plan, uid, franjas_leidas, request.form.get("reemplazar") == "1",
+                                       asignacion, en_valoracion)
+        # Sesiones de lo que queda de semana con el horario nuevo (las ya creadas no se tocan)
+        hoy = dt.date.today()
+        if hoy.weekday() < 5:
+            res["planificadas"] = plan.planificar(hoy.isoformat(), (lunes_de(hoy) + dt.timedelta(days=4)).isoformat(),
+                                                  False, uid)["sesiones"]
+        return jsonify(res)
 
     @app.delete("/api/franjas/<int:id_>")
     def borrar_franja(id_):
-        plan.borrar_franja(id_)
-        return jsonify(ok=True)
+        return jsonify(ok=True, resultado=plan.borrar_franja(id_))
 
     @app.post("/api/planificar")
     def planificar():

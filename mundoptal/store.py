@@ -20,7 +20,7 @@ JERARQUIA = {
 
 CAMPOS_EDITABLES = {
     "usuarios": {"nombre", "especialidad"},
-    "alumnos": {"nombre", "curso", "observaciones", "activo"},
+    "alumnos": {"nombre", "curso", "observaciones", "activo", "seguimiento"},
     "acis": {"curso", "curso_escolar", "trimestre", "titulo", "materia", "prof_area",
              "prof_ptal", "observaciones"},
     "adaptaciones": {"area", "tipo", "nivel_curricular", "orden"},
@@ -31,6 +31,8 @@ CAMPOS_EDITABLES = {
     "informes": {"curso", "maestra", "prof_area", "social", "actitud_pt", "actitud_al", "valoracion",
                  "orientaciones", "estrategias", "despedida"},
     "informe_areas": {"area", "texto", "orden"},
+    "informes_observacion": {"titulo", "curso", "curso_escolar", "fecha", "desde", "hasta", "maestra", "destinatario"},
+    "observacion_apartados": {"titulo", "texto", "orden"},
     "tareas": {"texto", "categoria", "alumno_id", "fecha_limite", "hecha", "orden"},
     "citas": {"fecha", "hora_inicio", "hora_fin", "tipo", "alumno_id", "con_quien", "lugar", "notas", "hecha"},
     "materiales": {"titulo"},
@@ -51,6 +53,10 @@ def normalizar(texto: str) -> str:
     t = unicodedata.normalize("NFKD", texto or "")
     t = "".join(c for c in t if not unicodedata.combining(c))
     return " ".join(t.lower().replace(":", " ").split())
+
+
+# Seguimiento del alumno: con ACI o en valoración (solo informe de observación)
+SEGUIMIENTOS = ("aci", "observacion")
 
 
 class StoreError(ValueError):
@@ -164,14 +170,18 @@ class Store:
         )
 
     def crear_alumno(self, nombre: str, curso: str = "", observaciones: str = "",
-                     usuario_id: int | None = None) -> int:
+                     usuario_id: int | None = None, seguimiento: str = "aci") -> int:
+        """`seguimiento` = 'observacion' para un alumno en valoración que aún no tiene ACI."""
         nombre = (nombre or "").strip()
         if not nombre:
             raise StoreError("El nombre del alumno es obligatorio")
+        seguimiento = seguimiento or "aci"
+        if seguimiento not in SEGUIMIENTOS:
+            raise StoreError("Tipo de seguimiento no válido")
         with self.lock:
             cur = self.conn.execute(
-                "INSERT INTO alumnos(nombre, curso, observaciones, usuario_id) VALUES (?, ?, ?, ?)",
-                (nombre, curso or "", observaciones or "", usuario_id),
+                "INSERT INTO alumnos(nombre, curso, observaciones, usuario_id, seguimiento) VALUES (?, ?, ?, ?, ?)",
+                (nombre, curso or "", observaciones or "", usuario_id, seguimiento),
             )
             return cur.lastrowid
 
@@ -191,6 +201,9 @@ class Store:
             al["informes"] = self.q(
                 """SELECT id, trimestre, curso_escolar, actualizado FROM informes WHERE alumno_id = ?
                    ORDER BY curso_escolar DESC, trimestre DESC""", (alumno_id,))
+            al["observaciones_informes"] = self.q(
+                """SELECT id, titulo, fecha, desde, hasta, actualizado FROM informes_observacion
+                   WHERE alumno_id = ? ORDER BY fecha DESC, id DESC""", (alumno_id,))
             al["citas"] = self.q("SELECT * FROM citas WHERE alumno_id = ? ORDER BY fecha DESC, hora_inicio DESC",
                                  (alumno_id,))
         return al
@@ -210,6 +223,8 @@ class Store:
             raise StoreError("El tipo de calendario es «colegio» o «personal»")
         if tabla == "calendarios_externos" and "visible" in cambios:
             cambios["visible"] = 1 if cambios["visible"] in (1, True, "1", "true") else 0
+        if tabla == "alumnos" and "seguimiento" in cambios and cambios["seguimiento"] not in SEGUIMIENTOS:
+            raise StoreError("Tipo de seguimiento no válido")
         for k in ("eval_1t", "eval_2t", "eval_3t"):
             if k in cambios and cambios[k] not in ("", *ESCALA):
                 raise StoreError(f"Valor de evaluación no válido: {cambios[k]}")
@@ -224,6 +239,11 @@ class Store:
             elif tabla == "tareas" and "hecha" in cambios:
                 self.conn.execute("UPDATE tareas SET hecha_en = CASE WHEN hecha = 1 THEN CURRENT_TIMESTAMP END "
                                   "WHERE id = ?", (id_,))
+            elif tabla == "informes_observacion":
+                self.conn.execute("UPDATE informes_observacion SET actualizado = CURRENT_TIMESTAMP WHERE id = ?", (id_,))
+            elif tabla == "observacion_apartados":
+                self.conn.execute("""UPDATE informes_observacion SET actualizado = CURRENT_TIMESTAMP
+                                     WHERE id = (SELECT informe_id FROM observacion_apartados WHERE id = ?)""", (id_,))
             elif tabla == "informe_areas":
                 self.conn.execute("""UPDATE informes SET actualizado = CURRENT_TIMESTAMP
                                      WHERE id = (SELECT informe_id FROM informe_areas WHERE id = ?)""", (id_,))
@@ -293,6 +313,8 @@ class Store:
                 (alumno_id, *datos.values()),
             )
             aci_id = cur.lastrowid
+            # Si estaba en valoración y ya tiene ACI, pasa a seguimiento con ACI
+            self.conn.execute("UPDATE alumnos SET seguimiento = 'aci' WHERE id = ?", (alumno_id,))
             if con_adaptaciones:
                 for i, area in enumerate(ADAPTACIONES_POR_DEFECTO):
                     self.conn.execute(

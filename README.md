@@ -19,6 +19,7 @@ Internet y los datos de los alumnos nunca salen del equipo.
 | **Mi horario** | Configurar las franjas semanales del maestro (día, hora, PT/AL, alumnos, ítems por sesión) o **importarlas** desde una hoja de cálculo (`.xlsx` o `.csv`) con los días en columnas y las horas en filas. |
 | **Agenda de sesiones** | Planificación automática: los ítems **no conseguidos** de la ACI vigente de cada alumno se reparten en sus sesiones, rotando para que todos se trabajen. Desde la agenda se marca lo trabajado y se evalúa; un ítem que pasa a **C** deja de planificarse. |
 | **Informes a familias** | Informe descriptivo trimestral por alumno con el formato de «Observaciones y comentarios» de las ACIs: cómo se ha mostrado, actitud en las sesiones de PT y de AL, evolución en cada área (con un borrador hecho a partir de las evaluaciones de la ACI), cierre, despedida y firmas. Se exporta a Word y se incluye también al final de la ACI de ese trimestre. |
+| **Alumnos en valoración (sin ACI)** | Para alumnos que vienen a las sesiones mientras Orientación los valora y no tienen ACI. En su ficha, *Seguimiento: En valoración* (o al crearlos o al importar el horario). En la agenda tienen «Frases rápidas» para las notas y en **Informes** se les hace un **informe de observación**: motivo, organización de las sesiones (se rellena con el horario), comportamiento, atención, comprensión, expresión y habla, relación, regulación emocional, qué le ayuda y valoración. Las notas de la agenda del periodo salen redactadas y con el apartado sugerido. Se exporta a Word (los apartados vacíos no salen). Si más adelante tiene ACI, pasa solo a «Con ACI». |
 | **Reuniones** | Notas de reuniones con familias, Orientación, profesores o terapeutas (con alumno opcional), con micrófono. Se escribe una idea por línea y cada línea pasa a **tareas pendientes** con el botón «➕ Tarea» o con **Ctrl + Enter**; la tarea hereda el alumno y queda enlazada a su reunión. Las reuniones aparecen también en el calendario de *Mi trabajo* y en la ficha del alumno. |
 | **Actualizaciones** | En *Ajustes › Actualizaciones* se comprueba si hay una versión nueva publicada en GitHub y se instala con un botón: el programa se cierra, se sustituye y se vuelve a abrir. Los datos no se tocan (antes se hace una copia de seguridad). Al abrir, avisa si hay versión nueva. |
 | **Google Calendar (solo lectura)** | *Ajustes › Google Calendar*: se pega el enlace «Insertar», el ID del calendario o la dirección iCal (pública o secreta) y sus eventos aparecen en *Mi trabajo* y en la agenda del día, con una leyenda para mostrar u ocultar cada calendario. Nada de lo que se crea en la aplicación va a Google. Las direcciones públicas viajan al exportar los datos; las secretas se guardan en el Administrador de credenciales de Windows y hay que pegarlas de nuevo en otro ordenador. |
@@ -45,9 +46,17 @@ cabecera con LUNES…VIERNES y una fila por tramo horario):
 | 9:00-10:00 | ANA | LUIS / PEPE | … |
 | 11:00-11:30 | PATIO | PATIO | … |
 
-Los nombres separados por «/», «,» o «y» son alumnos de la misma sesión (se crean si
-no existen). Patio, comedor, tiempo de trabajo, departamento, reuniones, etc. se
+Los nombres separados por «/», «,», «y» o «e» son alumnos de la misma sesión. Patio,
+comedor, tiempo de trabajo, departamento, pruebas de lenguaje, reuniones, etc. se
 guardan como franjas «otro». Un «?» marca la sesión como *pendiente de confirmar*.
+
+Antes de guardar se ve una **vista previa**: qué alumno de la aplicación es cada nombre
+de la hoja («MARIO» puede ser Mario P. o Mario L.; «MARIO.L» busca un Mario cuyo
+apellido empieza por L), cuáles son nuevos y si entran *en valoración, sin ACI*.
+**Actualizar mi horario** cambia solo lo que es distinto y **conserva** las notas, la
+asistencia y las observaciones de las sesiones ya hechas (las franjas que desaparecen
+se archivan); se borran solo las sesiones futuras vacías. Después se planifica lo que
+queda de semana.
 
 También desde la consola, sin abrir la ventana:
 

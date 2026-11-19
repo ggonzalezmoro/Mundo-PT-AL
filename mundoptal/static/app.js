@@ -45,6 +45,7 @@ async function intentar(fn) {
 function fechaISO(d) { return d.toISOString().slice(0, 10); }
 function lunes(d) { const x = new Date(d); x.setHours(12); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; }
 function sumarDias(iso, n) { const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return fechaISO(d); }
+const fechaES = (iso) => (iso ? iso.split("-").reverse().join("/") : "");
 function fechaCorta(iso) { const [y, m, d] = iso.split("-"); return `${d}/${m}`; }
 // Fecha de hoy en hora local (toISOString usa UTC y de madrugada daría el día anterior)
 function hoyISO() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
@@ -71,6 +72,7 @@ const rutas = [
   [/^#\/perfiles$/, vistaPerfiles, "perfiles"],
   [/^#\/informes$/, vistaInformes, "informes"],
   [/^#\/informe\/(\d+)$/, vistaInforme, "informes"],
+  [/^#\/observacion\/(\d+)$/, vistaObservacion, "informes"],
   [/^#\/trabajo(?:\/(dia|semana|mes))?(?:\/(\d{4}-\d{2}(?:-\d{2})?))?$/, vistaTrabajo, "trabajo"],
   [/^#\/material$/, vistaMaterial, "material"],
   [/^#\/reuniones$/, vistaReuniones, "reuniones"],
@@ -100,6 +102,8 @@ window.addEventListener("hashchange", () => { vista.scrollTop = 0; enrutar(); })
 // ======================================================================= alumnos
 async function vistaAlumnos() {
   const alumnos = await api("GET", "/api/alumnos");
+  const enValoracion = alumnos.filter((a) => a.seguimiento === "observacion");
+  const conACI = alumnos.filter((a) => a.seguimiento !== "observacion");
   vista.innerHTML = `
     <div class="cabecera">
       <div><h1>Alumnos y ACIs</h1><p class="sub">Crea un alumno y su Adaptación Curricular Individual, o importa una ACI que ya tengas en Word.</p></div>
@@ -115,11 +119,17 @@ async function vistaAlumnos() {
         <div><label>Nombre</label><input name="nombre" required placeholder="Nombre del alumno"></div>
         <div><label>Curso</label><input name="curso" placeholder="p. ej. 2º Curso del 2º Ciclo de Educación Infantil"></div>
         <div class="campo-ancho"><label>Observaciones</label><input name="observaciones" placeholder="Diagnóstico, apoyos, etc. (opcional)"></div>
+        <div class="campo-ancho"><label class="check"><input type="checkbox" name="valoracion" id="nuevo-valoracion">
+          En valoración, <strong>sin ACI</strong>: solo se hará un informe de observación de cómo se muestra en las sesiones</label></div>
       </div>
-      <p class="acciones" style="margin:12px 0 0"><button class="primario">Guardar y crear ACI</button><button type="button" id="cancelar">Cancelar</button></p>
+      <p class="acciones" style="margin:12px 0 0"><button class="primario" id="guardar-alumno">Guardar y crear ACI</button><button type="button" id="cancelar">Cancelar</button></p>
     </form>
-    ${alumnos.length ? `<div class="rejilla">${alumnos.map(tarjetaAlumno).join("")}</div>`
-      : `<div class="vacio">Todavía no hay alumnos. Pulsa «Nuevo alumno» o importa una ACI desde Word.</div>`}`;
+    ${!alumnos.length ? `<div class="vacio">Todavía no hay alumnos. Pulsa «Nuevo alumno» o importa una ACI desde Word.</div>`
+      : `<div class="rejilla">${conACI.map(tarjetaAlumno).join("")}</div>
+        ${enValoracion.length ? `<h2 class="seccion-alumnos">En valoración, sin ACI (${enValoracion.length})</h2>
+          <p class="muted">Alumnos que vienen a las sesiones mientras se les valora. No tienen ACI: de ellos se hace un <strong>informe de observación</strong>.</p>
+          <div class="rejilla">${enValoracion.map(tarjetaAlumno).join("")}</div>` : ""}`}`;
+  $("#nuevo-valoracion").onchange = (e) => { $("#guardar-alumno").textContent = e.target.checked ? "Guardar alumno" : "Guardar y crear ACI"; };
 
   const form = $("#form-alumno");
   $("#nuevo").onclick = () => { form.hidden = false; form.nombre.focus(); };
@@ -127,7 +137,11 @@ async function vistaAlumnos() {
   form.onsubmit = (e) => intentar(async () => {
     e.preventDefault();
     const datos = Object.fromEntries(new FormData(form));
+    const valoracion = !!datos.valoracion;
+    delete datos.valoracion;
+    datos.seguimiento = valoracion ? "observacion" : "aci";
     const { id } = await api("POST", "/api/alumnos", datos);
+    if (valoracion) { location.hash = `#/alumno/${id}`; return; }
     const aci = await api("POST", `/api/alumnos/${id}/acis`, {});
     location.hash = `#/aci/${aci.id}`;
   });
@@ -135,12 +149,14 @@ async function vistaAlumnos() {
 }
 
 function tarjetaAlumno(a) {
-  return `<div class="tarjeta alumno">
+  const obs = a.seguimiento === "observacion";
+  return `<div class="tarjeta alumno ${obs ? "en-valoracion" : ""}">
     <div class="fila"><div class="avatar">${esc(a.nombre[0] || "?").toUpperCase()}</div>
       <div><div class="nombre">${esc(a.nombre)}</div><div class="muted">${esc(a.curso || "Curso sin indicar")}</div></div></div>
-    <div><span class="chip">${a.num_acis} ACI${a.num_acis === 1 ? "" : "s"}</span></div>
+    <div>${obs ? `<span class="chip valoracion">En valoración · sin ACI</span>` : `<span class="chip">${a.num_acis} ACI${a.num_acis === 1 ? "" : "s"}</span>`}</div>
     <div class="botones">
-      ${a.aci_vigente_id ? `<a class="boton primario" href="#/aci/${a.aci_vigente_id}">Abrir ACI</a>` : ""}
+      ${obs ? `<a class="boton primario" href="#/alumno/${a.id}">Informe de observación</a>` : ""}
+      ${!obs && a.aci_vigente_id ? `<a class="boton primario" href="#/aci/${a.aci_vigente_id}">Abrir ACI</a>` : ""}
       <a class="boton" href="#/alumno/${a.id}">Ficha</a>
     </div></div>`;
 }
@@ -159,6 +175,15 @@ async function importarWord(archivo, alumnoId) {
 
 async function vistaAlumno(id) {
   const [a] = await Promise.all([api("GET", `/api/alumnos/${id}`), infoTrabajo()]);
+  const obs = a.seguimiento === "observacion";
+  const listaObs = a.observaciones_informes || [];
+  const tarjetaObservaciones = `<div class="tarjeta"><h2>🔍 Informes de observación</h2>
+      <p class="muted">Cómo se muestra en las sesiones (conducta, atención, comunicación, relación…). Usa tus notas de la agenda y se exporta a Word.</p>
+      ${listaObs.length ? `<table class="tabla-adapt"><tr><th>Fecha</th><th>Periodo observado</th><th>Última modificación</th><th></th></tr>
+        ${listaObs.map((x) => `<tr><td>${esc(fechaES(x.fecha))}</td><td>${esc(fechaES(x.desde))} – ${esc(fechaES(x.hasta))}</td><td>${esc(x.actualizado)}</td>
+          <td><a class="boton mini" href="#/observacion/${x.id}">Abrir</a></td></tr>`).join("")}</table>`
+        : `<div class="vacio">Sin informes de observación todavía.</div>`}
+      <p style="margin:12px 0 0"><button class="${obs ? "primario" : ""}" id="nueva-observacion">🔍 Nuevo informe de observación</button></p></div>`;
   vista.innerHTML = `
     <div class="migas"><a href="#/alumnos">Alumnos</a> › ${esc(a.nombre)}</div>
     <div class="cabecera"><div><h1>${esc(a.nombre)}</h1><p class="sub">${esc(a.curso)}</p></div>
@@ -169,9 +194,13 @@ async function vistaAlumno(id) {
       <div class="campos">
         <div><label>Nombre</label><input data-tabla="alumnos" data-id="${a.id}" data-campo="nombre" value="${esc(a.nombre)}"></div>
         <div><label>Curso</label><input data-tabla="alumnos" data-id="${a.id}" data-campo="curso" value="${esc(a.curso)}"></div>
+        <div><label>Seguimiento</label><select data-tabla="alumnos" data-id="${a.id}" data-campo="seguimiento" id="seguimiento">
+          <option value="aci" ${obs ? "" : "selected"}>Con ACI</option>
+          <option value="observacion" ${obs ? "selected" : ""}>En valoración, sin ACI (informe de observación)</option></select></div>
         <div class="campo-ancho"><label>Observaciones</label><textarea data-tabla="alumnos" data-id="${a.id}" data-campo="observaciones" rows="2">${esc(a.observaciones)}</textarea></div>
       </div>
       <p style="margin:12px 0 0"><button class="peligro" id="borrar-alumno">Borrar alumno y todas sus ACIs</button></p></div>
+    ${obs ? tarjetaObservaciones : ""}
     <div class="tarjeta" id="asistencia"><h2>Asistencia a las sesiones</h2><p class="muted">Cargando…</p></div>
     <div class="tarjeta"><h2>Informes para la familia</h2>
       ${a.informes.length ? `<table class="tabla-adapt"><tr><th>Trimestre</th><th>Curso escolar</th><th>Última modificación</th><th></th></tr>
@@ -191,10 +220,17 @@ async function vistaAlumno(id) {
       ${a.acis.length ? `<table class="tabla-adapt"><tr><th>Trimestre</th><th>Curso escolar</th><th>Curso</th><th>Última modificación</th><th></th></tr>
         ${a.acis.map((x, i) => `<tr><td>${x.trimestre}º trimestre ${i === 0 ? '<span class="chip">vigente</span>' : ""}</td><td>${esc(x.curso_escolar)}</td>
           <td>${esc(x.curso)}</td><td>${esc(x.actualizado)}</td><td><a class="boton mini" href="#/aci/${x.id}">Abrir</a></td></tr>`).join("")}</table>`
-        : `<div class="vacio">Sin ACIs todavía.</div>`}
-      <p class="muted" style="margin-top:10px">La ACI más reciente es la vigente: es la que se usa para planificar las sesiones.</p></div>`;
+        : `<div class="vacio">${obs ? "Está en valoración y no tiene ACI. Si más adelante la necesita, créala aquí y pasará a «Con ACI»." : "Sin ACIs todavía."}</div>`}
+      <p class="muted" style="margin-top:10px">La ACI más reciente es la vigente: es la que se usa para planificar las sesiones.</p></div>
+    ${!obs && listaObs.length ? tarjetaObservaciones : ""}`;
   enlazarCampos(vista);
   pintarAsistencia(id);
+  $("#seguimiento").addEventListener("change", () => setTimeout(() => vistaAlumno(id), 300));
+  const nuevaObs = $("#nueva-observacion");
+  if (nuevaObs) nuevaObs.onclick = () => intentar(async () => {
+    const r = await api("POST", `/api/alumnos/${id}/observaciones`, {});
+    location.hash = `#/observacion/${r.id}`;
+  });
   $("#nueva-aci").onclick = () => intentar(async () => {
     const r = await api("POST", `/api/alumnos/${id}/acis`, {});
     location.hash = `#/aci/${r.id}`;
@@ -611,21 +647,62 @@ async function vistaHorario() {
       </div>`).join("") || '<div class="muted" style="text-align:center;padding:20px 0">Libre</div>'}
     </div></div>`).join("")}</div>`;
   $("#nueva-franja").onclick = () => formFranja(null, alumnos);
-  $("#importar-horario").onchange = (e) => intentar(async () => {
+  $("#importar-horario").onchange = (e) => {
     const archivo = e.target.files[0];
-    if (!archivo) return;
-    const reemplazar = franjas.length > 0 && confirm("¿Quieres reemplazar tu horario actual por el del archivo?\n\nAceptar: se borra el horario actual (y sus sesiones planificadas).\nCancelar: se añaden las franjas nuevas sin tocar las que ya tienes.");
-    const fd = new FormData();
-    fd.append("archivo", archivo);
-    fd.append("reemplazar", reemplazar ? "1" : "0");
-    const r = await api("POST", "/api/horario/importar", fd);
-    let txt = `Horario importado: ${r.franjas} franjas`;
+    e.target.value = "";
+    if (archivo) dialogoImportarHorario(archivo, franjas.length > 0);
+  };
+  $$("[data-franja]").forEach((el) => el.onclick = () => formFranja(franjas.find((f) => f.id === +el.dataset.franja), alumnos));
+}
+
+// Vista previa al importar: qué alumno de la app es cada nombre del horario y qué va a cambiar
+async function dialogoImportarHorario(archivo, hayHorario) {
+  const fd = new FormData();
+  fd.append("archivo", archivo);
+  const p = await intentar(() => api("POST", "/api/horario/analizar", fd));
+  const opciones = (n) => `<option value="nuevo" ${n.alumno_id ? "" : "selected"}>＋ Alumno nuevo</option>
+    ${p.alumnos.map((a) => `<option value="${a.id}" ${a.id === n.alumno_id ? "selected" : ""}>${esc(a.nombre)}</option>`).join("")}`;
+  const c = p.cambios;
+  dialogo.innerHTML = `<form method="dialog" id="fimp">
+    <div class="dlg-cab"><h2>Importar horario</h2><button type="button" id="cerrar">Cerrar</button></div>
+    <div class="dlg-cuerpo">
+      <p>He leído <strong>${p.franjas.length} franjas</strong>. Comprueba quién es cada alumno del horario:</p>
+      <table class="tabla-adapt"><tr><th>En el horario</th><th>Sesiones</th><th>Alumno en la app</th><th>Si es nuevo</th></tr>
+        ${p.nombres.map((n, i) => `<tr><td><strong>${esc(n.texto)}</strong>${n.dudoso ? ' <span class="chip pendientes" title="Hay varios alumnos que encajan: comprueba que es el correcto">¿seguro?</span>' : ""}</td>
+          <td>${n.sesiones}</td><td><select data-nombre="${i}">${opciones(n)}</select></td>
+          <td><label class="check" data-valoracion-de="${i}" ${n.alumno_id ? "hidden" : ""}><input type="checkbox" data-valoracion="${i}" checked> En valoración, sin ACI</label></td></tr>`).join("")}</table>
+      ${hayHorario ? `<div class="aviso" style="margin-top:12px">Al <strong>actualizar</strong> tu horario: ${c.nuevas} franjas nuevas, ${c.cambiadas} cambian, ${c.iguales} siguen igual y ${c.retiradas} se quitan.
+        Las notas, la asistencia y las observaciones de las sesiones ya hechas <strong>se conservan</strong>; solo se quitan las sesiones futuras vacías de lo que cambia.</div>` : ""}
+    </div>
+    <div class="dlg-pie">${hayHorario ? `<button type="button" id="solo-anadir" style="margin-right:auto" title="No toca tu horario actual: solo añade las franjas que no se solapan">Solo añadir franjas</button>` : ""}
+      <button class="primario" id="aplicar-horario">${hayHorario ? "Actualizar mi horario" : "Importar horario"}</button></div></form>`;
+  dialogo.showModal();
+  $("#cerrar").onclick = () => dialogo.close();
+  $$("[data-nombre]").forEach((sel) => sel.onchange = () => { $(`[data-valoracion-de="${sel.dataset.nombre}"]`).hidden = sel.value !== "nuevo"; });
+  const aplicar = (reemplazar) => intentar(async () => {
+    const asignacion = {}, valoracion = [];
+    p.nombres.forEach((n, i) => {
+      const v = $(`[data-nombre="${i}"]`).value;
+      asignacion[n.texto] = v === "nuevo" ? "nuevo" : +v;
+      if (v === "nuevo" && $(`[data-valoracion="${i}"]`).checked) valoracion.push(n.texto);
+    });
+    const fd2 = new FormData();
+    fd2.append("archivo", archivo);
+    fd2.append("reemplazar", reemplazar ? "1" : "0");
+    fd2.append("asignacion", JSON.stringify(asignacion));
+    fd2.append("en_valoracion", JSON.stringify(valoracion));
+    const r = await api("POST", "/api/horario/importar", fd2);
+    dialogo.close();
+    let txt = `Horario guardado: ${r.franjas} franjas`;
+    if (r.retiradas) txt += `, ${r.retiradas} quitadas`;
     if (r.alumnos_nuevos.length) txt += `. Alumnos nuevos: ${r.alumnos_nuevos.join(", ")}`;
     if (r.omitidas.length) txt += `. Omitidas por solaparse: ${r.omitidas.length}`;
+    if (r.planificadas) txt += `. ${r.planificadas} sesiones nuevas esta semana`;
     aviso(txt);
     vistaHorario();
   });
-  $$("[data-franja]").forEach((el) => el.onclick = () => formFranja(franjas.find((f) => f.id === +el.dataset.franja), alumnos));
+  $("#fimp").onsubmit = (e) => { e.preventDefault(); aplicar(hayHorario); };
+  if (hayHorario) $("#solo-anadir").onclick = () => aplicar(false);
 }
 
 function formFranja(f, alumnos) {
@@ -650,8 +727,8 @@ function formFranja(f, alumnos) {
   dialogo.showModal();
   $("#cerrar").onclick = () => dialogo.close();
   if (f) $("#borrar-franja").onclick = () => intentar(async () => {
-    if (!confirm("¿Borrar esta franja y sus sesiones planificadas?")) return;
-    await api("DELETE", `/api/franjas/${f.id}`); dialogo.close(); vistaHorario();
+    if (!confirm("¿Quitar esta franja del horario? Se borran sus sesiones futuras vacías; las sesiones ya hechas y sus notas se conservan.")) return;
+    await api("DELETE", `/api/franjas/${f.id}`); dialogo.close(); aviso("Franja quitada del horario"); vistaHorario();
   });
   $("#ff").onsubmit = (e) => {
     e.preventDefault();
@@ -740,6 +817,12 @@ function enlazarSesiones(recargar) {
     recargar();
   }));
   $$("[data-notas]").forEach((t) => t.onchange = () => intentar(() => api("PATCH", `/api/sesiones/${t.dataset.notas}`, { notas: t.value })));
+  $$("[data-notas-frase]").forEach((caja) => caja.querySelectorAll(".frase").forEach((b) => b.onclick = () => {
+    const ta = $("#notas-" + caja.dataset.notasFrase);
+    const base = ta.value.trim().replace(/[.,;]$/, "");
+    ta.value = base ? `${base}. ${b.textContent}` : b.textContent;
+    ta.dispatchEvent(new Event("change"));
+  }));
   $$("[data-obs-item]").forEach((t) => t.onchange = () => intentar(() =>
     api("PATCH", `/api/sesiones/${t.dataset.sesion}/items/${t.dataset.item}`, { observacion: t.value })));
   enlazarMicros(vista);
@@ -829,10 +912,18 @@ function enlazarCitasYTareas(citas, alumnos, recargar) {
   }));
 }
 
+// Frases rápidas para las notas de los alumnos en valoración (sin ACI)
+const FRASES_OBS_SESION = ["Viene contento/a", "Le cuesta separarse del aula", "Atiende bien", "Se distrae con facilidad",
+  "Necesita que le redirija", "Sigue órdenes sencillas", "No comprende la orden", "Se comunica con gestos",
+  "Usa palabras sueltas", "Hace frases cortas", "Habla poco inteligible", "Juega con los compañeros",
+  "Prefiere jugar solo/a", "Respeta el turno", "Se frustra", "Le ayuda el apoyo visual"];
+
 function htmlSesion(s) {
+  const obs = s.seguimiento === "observacion" || !s.aci_id;
   return `<div class="sesion ${s.estado}">
     <div class="cab-ses"><span class="franja" style="padding:0;background:none;border:none;cursor:default"><span class="hora">${s.inicio}–${s.fin}</span></span>
-      <a href="#/aci/${s.aci_id}" title="Abrir ACI">${esc(s.alumno)}</a><span class="chip">${s.especialidad}</span></div>
+      ${s.aci_id ? `<a href="#/aci/${s.aci_id}" title="Abrir ACI">${esc(s.alumno)}</a>` : `<a href="#/alumno/${s.alumno_id}" title="Abrir ficha">${esc(s.alumno)}</a>`}<span class="chip">${s.especialidad}</span>
+      ${s.seguimiento === "observacion" ? '<span class="chip valoracion" title="Sin ACI: tus notas irán a su informe de observación">En valoración</span>' : ""}</div>
     ${s.items.length ? `<ul>${s.items.map((it) => `<li>
       <input type="checkbox" title="Trabajado en la sesión" data-trabajado data-sesion="${s.id}" data-item="${it.id}" ${it.trabajado ? "checked" : ""}>
       <div>${esc(it.texto)}<div class="ctx">${esc(it.subarea || it.area)} · ${esc(it.competencia)}</div>
@@ -841,9 +932,12 @@ function htmlSesion(s) {
         <button class="icono" title="Quitar de esta sesión" data-quitar data-sesion="${s.id}" data-item="${it.id}">✕ quitar</button></div>
         <div class="obs-item"><textarea rows="1" class="nota" placeholder="Observación rápida (luego se redacta en el informe)" id="obs-${s.id}-${it.id}"
           data-obs-item data-sesion="${s.id}" data-item="${it.id}">${esc(it.observacion || "")}</textarea>${botonMicro(`obs-${s.id}-${it.id}`)}</div></div></li>`).join("")}</ul>`
+      : obs ? `<p class="muted" style="font-size:12px">Sin ACI: apunta cómo se ha mostrado en la sesión; luego lo usarás en su informe de observación.</p>`
       : `<p class="muted" style="font-size:12px">Sin ítems pendientes asignados.</p>`}
     <div class="notas-sesion"><textarea rows="2" placeholder="Notas de la sesión (escríbelas o díctalas rápido; luego se redactan en el informe)" data-notas="${s.id}" id="notas-${s.id}" style="font-size:12px">${esc(s.notas)}</textarea>
       ${botonMicro("notas-" + s.id)}</div>
+    ${obs ? `<details class="frases-sesion"><summary class="muted" style="font-size:12px">Frases rápidas</summary>
+      <div class="frases" data-notas-frase="${s.id}">${FRASES_OBS_SESION.map((f) => `<button type="button" class="mini frase">${esc(f)}</button>`).join("")}</div></details>` : ""}
     <div class="estado" style="margin-top:6px">
       ${s.estado !== "realizada" ? `<button class="mini" data-sesion-estado="realizada" data-id="${s.id}">✔ Realizada</button>` : `<span class="chip">Realizada</span>`}
       ${s.estado !== "cancelada" ? `<button class="mini" data-falta="${s.id}" title="El alumno no ha venido: queda registrado como falta">🚫 No ha venido</button>
@@ -935,7 +1029,17 @@ async function vistaInformes() {
   const d = await api("GET", "/api/informes");
   let trimestre = d.trimestre;
   const pintar = () => {
-    const filas = d.alumnos.map((a) => {
+    const tarjetaObs = (a) => {
+      const ult = (a.observaciones || [])[0];
+      return `<div class="tarjeta alumno en-valoracion">
+        <div class="fila"><div class="avatar">${esc(a.nombre[0] || "?").toUpperCase()}</div>
+          <div><div class="nombre">${esc(a.nombre)}</div><div class="muted">${esc(a.curso || "Curso sin indicar")}</div></div></div>
+        <div>${ult ? `<span class="chip valoracion">Observación · ${esc(fechaES(ult.fecha))}</span>` : `<span class="muted">Sin informe de observación</span>`}</div>
+        <div class="botones">${ult ? `<a class="boton primario" href="#/observacion/${ult.id}">Abrir informe</a>` : ""}
+          <button class="${ult ? "" : "primario"}" data-crear-obs="${a.id}">${ult ? "＋ Otro" : "Crear informe de observación"}</button></div></div>`;
+    };
+    const enValoracion = d.alumnos.filter((a) => a.seguimiento === "observacion");
+    const filas = d.alumnos.filter((a) => a.seguimiento !== "observacion").map((a) => {
       const inf = a.informes.find((x) => x.trimestre === trimestre && x.curso_escolar === d.curso_escolar);
       return `<div class="tarjeta alumno">
         <div class="fila"><div class="avatar">${esc(a.nombre[0] || "?").toUpperCase()}</div>
@@ -945,13 +1049,20 @@ async function vistaInformes() {
           : `<button class="primario" data-crear="${a.id}">Crear informe</button>`}</div></div>`;
     }).join("");
     vista.innerHTML = `
-      <div class="cabecera"><div><h1>Informes para las familias</h1>
+      <div class="cabecera"><div><h1>Informes</h1>
         <p class="sub">Informe descriptivo de cómo ha ido el trimestre («Observaciones y comentarios»): cómo se ha mostrado, actitud en las sesiones de PT y AL y evolución en cada área.
         Se prepara un borrador con la ACI, lo completas y lo exportas a Word.</p></div>
         <div class="acciones"><label for="tri" style="align-self:center">Trimestre</label>
           <select id="tri">${[1, 2, 3].map((t) => `<option value="${t}" ${t === trimestre ? "selected" : ""}>${t}º · ${esc(d.curso_escolar)}</option>`).join("")}</select></div></div>
-      ${d.alumnos.length ? `<div class="rejilla">${filas}</div>` : `<div class="vacio">Todavía no tienes alumnos en tu perfil.</div>`}`;
+      ${d.alumnos.length ? `<div class="rejilla">${filas}</div>` : `<div class="vacio">Todavía no tienes alumnos en tu perfil.</div>`}
+      ${enValoracion.length ? `<h2 class="seccion-alumnos">🔍 Informes de observación · alumnos en valoración, sin ACI</h2>
+        <p class="muted">Cómo se muestran en las sesiones (conducta, atención, comunicación, relación…), con tus notas de la agenda. Se exporta a Word.</p>
+        <div class="rejilla">${enValoracion.map(tarjetaObs).join("")}</div>` : ""}`;
     $("#tri").onchange = (e) => { trimestre = +e.target.value; pintar(); };
+    $$("[data-crear-obs]").forEach((b) => b.onclick = () => intentar(async () => {
+      const r = await api("POST", `/api/alumnos/${b.dataset.crearObs}/observaciones`, {});
+      location.hash = `#/observacion/${r.id}`;
+    }));
     $$("[data-crear]").forEach((b) => b.onclick = () => crearInforme(b.dataset.crear, trimestre, d.curso_escolar));
   };
   pintar();
@@ -1037,6 +1148,114 @@ async function vistaInforme(id) {
     await api("DELETE", `/api/informe_areas/${b.dataset.borrarArea}`);
     vistaInforme(I.id);
   }));
+}
+
+// ======================================================================= informe de observación (sin ACI)
+let OBS = null;
+async function vistaObservacion(id) {
+  OBS = await api("GET", `/api/observaciones/${id}`);
+  const O = OBS;
+  const campo = (c, etiqueta, tipo = "text") => `<div><label>${etiqueta}</label><input type="${tipo}" data-tabla="informes_observacion" data-id="${O.id}" data-campo="${c}" value="${esc(O[c])}"></div>`;
+  vista.innerHTML = `
+    <div class="migas"><a href="#/informes">Informes</a> › <a href="#/alumno/${O.alumno_id}">${esc(O.alumno_nombre)}</a> › Informe de observación</div>
+    <div class="cabecera"><div><h1>🔍 Informe de observación · ${esc(O.alumno_nombre)}</h1>
+      <p class="sub">Cómo se muestra en las sesiones. Se guarda solo al escribir. Para dictar, pulsa 🎤 junto al cuadro (o <strong>Windows + H</strong>). Los apartados vacíos no salen en el Word.</p></div>
+      <div class="acciones"><button class="primario" id="word-obs">📄 Exportar a Word</button></div></div>
+    <div class="tarjeta"><div class="campos">
+      <div class="campo-ancho"><label>Título</label><input data-tabla="informes_observacion" data-id="${O.id}" data-campo="titulo" value="${esc(O.titulo)}"></div>
+      ${campo("curso", "Curso")}${campo("curso_escolar", "Curso escolar")}${campo("fecha", "Fecha del informe", "date")}
+      ${campo("desde", "Observado desde", "date")}${campo("hasta", "Hasta (vacío = hasta hoy)", "date")}
+      ${campo("destinatario", "Dirigido a (opcional)")}${campo("maestra", "Prof. AL/PT")}</div>
+      <p class="muted" style="margin:8px 0 0">El periodo marca qué notas de la agenda se usan abajo y cuántas sesiones constan en el Word.</p></div>
+    <div class="tarjeta" id="tarjeta-notas-obs"><h2>📝 Tus notas de la agenda</h2><p class="muted">Cargando…</p></div>
+    ${O.apartados.map((ap) => `<div class="tarjeta apartado-obs">
+      <div class="fila" style="gap:8px"><input class="titulo-area" data-tabla="observacion_apartados" data-id="${ap.id}" data-campo="titulo" value="${esc(ap.titulo)}">
+        ${ap.clave === "contexto" ? `<button class="mini" id="rellenar-contexto" title="Volver a escribir los días y horas según tu horario">↻ Con mi horario</button>` : ""}
+        <button class="mini peligro" data-borrar-apartado="${ap.id}" title="Quitar este apartado">✕</button></div>
+      ${O.ayudas[ap.clave] ? `<p class="muted" style="margin:4px 0">${esc(O.ayudas[ap.clave])}</p>` : ""}
+      <div class="notas-sesion"><textarea rows="4" data-tabla="observacion_apartados" data-id="${ap.id}" data-campo="texto" id="campo-obs-${ap.id}">${esc(ap.texto)}</textarea>
+        ${botonMicro("campo-obs-" + ap.id)}</div>
+      ${(O.frases[ap.clave] || []).length ? `<div class="frases" data-para="obs-${ap.id}">${O.frases[ap.clave].map((f) => `<button type="button" class="mini frase">${esc(f)}</button>`).join("")}</div>` : ""}
+    </div>`).join("")}
+    <p><button id="nuevo-apartado">＋ Añadir apartado</button>
+      <button class="peligro" id="borrar-obs" style="float:right">Borrar este informe</button></p>`;
+  enlazarCampos(vista);
+  enlazarMicros(vista);
+  $$(".frases").forEach((caja) => caja.querySelectorAll(".frase").forEach((b) => b.onclick = () => {
+    const ta = $("#campo-" + caja.dataset.para);
+    ta.value = (ta.value.trim() ? ta.value.trim() + " " : "") + b.textContent;
+    ta.dispatchEvent(new Event("change"));
+  }));
+  // Al cambiar el periodo se recargan las notas de la agenda
+  $$('[data-campo="desde"],[data-campo="hasta"]').forEach((el) => el.addEventListener("change", () => setTimeout(() => pintarNotasObs(O), 300)));
+  pintarNotasObs(O);
+  const ctx = $("#rellenar-contexto");
+  if (ctx) ctx.onclick = () => intentar(async () => {
+    const r = await api("GET", `/api/observaciones/${O.id}/contexto`);
+    const ap = O.apartados.find((x) => x.clave === "contexto");
+    const ta = $("#campo-obs-" + ap.id);
+    if (!r.texto) { aviso("No está en ninguna sesión de tu horario"); return; }
+    if (ta.value.trim() && !confirm("Se sustituirá el texto de este apartado por los días y horas de tu horario. ¿Seguir?")) return;
+    ta.value = r.texto;
+    ta.dispatchEvent(new Event("change"));
+  });
+  $("#word-obs").onclick = () => intentar(async () => {
+    if (window.pywebview) {
+      const r = await api("GET", `/api/observaciones/${O.id}/word?guardar=1`);
+      aviso("Guardado en " + r.ruta);
+    } else {
+      location.href = `/api/observaciones/${O.id}/word`;
+    }
+  });
+  $("#nuevo-apartado").onclick = () => intentar(async () => {
+    const titulo = prompt("Nombre del apartado", "Otras observaciones");
+    if (titulo === null) return;
+    await api("POST", `/api/observaciones/${O.id}/apartados`, { titulo });
+    vistaObservacion(O.id);
+  });
+  $$("[data-borrar-apartado]").forEach((b) => b.onclick = () => intentar(async () => {
+    if (!confirm("¿Quitar este apartado del informe?")) return;
+    await api("DELETE", `/api/observacion_apartados/${b.dataset.borrarApartado}`);
+    vistaObservacion(O.id);
+  }));
+  $("#borrar-obs").onclick = () => intentar(async () => {
+    if (!confirm("¿Borrar este informe de observación? No se puede deshacer.")) return;
+    await api("DELETE", `/api/informes_observacion/${O.id}`);
+    location.hash = `#/alumno/${O.alumno_id}`;
+  });
+}
+
+async function pintarNotasObs(O) {
+  const d = await api("GET", `/api/observaciones/${O.id}/notas`).catch(() => null);
+  const caja = $("#tarjeta-notas-obs");
+  if (!caja || !d) return;
+  const f = d.asistencia.faltas;
+  const asis = `<p><strong>${d.asistencia.realizadas}</strong> sesiones realizadas del ${fechaES(d.desde)} al ${fechaES(d.hasta)}
+    · <strong>${f.length} ${f.length === 1 ? "falta" : "faltas"}</strong></p>`;
+  if (!d.notas.length) {
+    caja.innerHTML = `<h2>📝 Tus notas de la agenda</h2>${asis}<p class="muted">Aún no hay notas de sesiones en este periodo. Lo que escribas o dictes
+      en las notas de cada sesión de la agenda aparecerá aquí, ya redactado, para añadirlo al apartado que quieras.</p>`;
+    return;
+  }
+  const opciones = (sug) => O.apartados.map((ap) => `<option value="${ap.id}" ${ap.clave === sug ? "selected" : ""}>${esc(ap.titulo)}</option>`).join("");
+  caja.innerHTML = `<h2>📝 Tus notas de la agenda</h2>${asis}
+    <p class="muted">Cada nota ya va redactada y con el apartado que parece corresponderle. Revísala y pulsa «Añadir».</p>
+    ${d.notas.map((n, i) => `<div class="obs-informe" style="border-top:1px solid var(--borde, #ddd);padding-top:8px;margin-top:8px">
+      <p class="muted" style="margin:0"><strong>${fechaCorta(n.fecha)}</strong> · ${esc(n.original)}</p>
+      <textarea rows="2" id="nota-obs-${i}">${esc(n.texto)}</textarea>
+      <div class="fila" style="gap:8px;margin-top:6px;flex-wrap:wrap"><label class="muted">Añadir a:</label>
+        <select id="nota-obs-dest-${i}">${opciones(n.apartado)}</select>
+        <button class="mini" data-usar-nota-obs="${i}">＋ Añadir</button></div></div>`).join("")}`;
+  $$("[data-usar-nota-obs]").forEach((b) => b.onclick = () => {
+    const i = b.dataset.usarNotaObs;
+    const ta = $("#campo-obs-" + $("#nota-obs-dest-" + i).value);
+    const txt = $("#nota-obs-" + i).value.trim();
+    if (!ta || !txt) return;
+    ta.value = (ta.value.trim() ? ta.value.trim() + " " : "") + txt;
+    ta.dispatchEvent(new Event("change"));
+    b.textContent = "✔ Añadida";
+    aviso("Nota añadida al apartado");
+  });
 }
 
 function htmlAsistencia(d) {
