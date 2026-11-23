@@ -90,8 +90,30 @@ def _buscar_nueva(raiz: Path) -> Path:
     raise ErrorActualizacion("El archivo descargado no contiene el programa.")
 
 
+def guion_cerrar_copias(destino: Path) -> str:
+    """Guion de PowerShell que cierra las otras copias del programa abiertas desde la carpeta
+    que se va a sustituir (p. ej. «MundoPTAL.exe --mcp», que abre Claude Desktop) y que
+    bloquean el .exe y sus DLL. Espera hasta 15 s a que terminen."""
+    carpeta = str(destino).rstrip("\\/") + "\\"
+    carpeta_ps = carpeta.replace("'", "''")
+    return "\r\n".join([
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        f"$carpeta = '{carpeta_ps}'",
+        "function Copias { Get-CimInstance Win32_Process -Filter \"Name='MundoPTAL.exe'\" |",
+        "  Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($carpeta, [StringComparison]::OrdinalIgnoreCase) } }",
+        "for ($i = 0; $i -lt 15; $i++) {",
+        "  $c = @(Copias)",
+        "  if ($c.Count -eq 0) { break }",
+        "  $c | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+        "  Start-Sleep -Seconds 1",
+        "}",
+        "",
+    ])
+
+
 def guion_reemplazo(pid: int, origen: Path, destino: Path, temporal: Path) -> str:
-    """Guion .bat que espera a que se cierre la aplicación, copia la versión nueva y la abre."""
+    """Guion .bat que espera a que se cierre la aplicación, cierra las copias que bloquean
+    la carpeta, copia la versión nueva y la abre."""
     return "\r\n".join([
         "@echo off",
         "chcp 65001 >nul",
@@ -101,6 +123,7 @@ def guion_reemplazo(pid: int, origen: Path, destino: Path, temporal: Path) -> st
         "  ping -n 2 127.0.0.1 >nul",
         "  goto espera",
         ")",
+        f'powershell -NoProfile -ExecutionPolicy Bypass -File "{temporal / "cerrar_copias.ps1"}" >nul 2>&1',
         f'robocopy "{origen}" "{destino}" /E /R:10 /W:2 /NFL /NDL /NJH /NJS /NP >nul',
         f'if errorlevel 8 echo No se pudo copiar la version nueva > "{temporal}\\error.txt"',
         f'start "" "{destino / EXE}"',
@@ -132,6 +155,7 @@ def instalar(url: str, abrir=_pedir, salir=None) -> dict:
     except (urllib.error.URLError, OSError, zipfile.BadZipFile) as e:
         raise ErrorActualizacion("No se ha podido descargar la versión nueva. Prueba otra vez.") from e
     origen = _buscar_nueva(temporal / "nuevo")
+    (temporal / "cerrar_copias.ps1").write_text(guion_cerrar_copias(destino), encoding="utf-8-sig")
     guion = temporal / "actualizar.bat"
     guion.write_text(guion_reemplazo(os.getpid(), origen, destino, temporal), encoding="utf-8")
     subprocess.Popen(

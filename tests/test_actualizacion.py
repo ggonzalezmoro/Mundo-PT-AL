@@ -97,3 +97,12 @@ def test_importar_datos_de_version_antigua(tmp_path, monkeypatch):
     assert r.status_code == 200, r.get_json()
     assert [a["nombre"] for a in c.get("/api/alumnos").get_json()] == ["Antiguo"]
     assert c.get("/api/informes").status_code == 200  # las tablas nuevas existen
+
+
+def test_guion_cierra_copias_que_bloquean():
+    g = actualizador.guion_reemplazo(1234, Path("C:/t/nuevo/MundoPTAL"), Path("C:/Programa"), Path("C:/t"))
+    # primero espera a la app, luego cierra las copias (--mcp) y después copia
+    assert g.index("PID eq 1234") < g.index("cerrar_copias.ps1") < g.index("robocopy")
+    ps = actualizador.guion_cerrar_copias(Path("C:/Mi carpeta/O'Neil/MundoPTAL"))
+    assert "MundoPTAL.exe" in ps and "Stop-Process" in ps and "O''Neil" in ps
+    assert ps.count("StartsWith($carpeta") == 1  # solo las copias de esa carpeta, no otras instalaciones
