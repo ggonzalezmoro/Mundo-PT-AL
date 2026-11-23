@@ -77,6 +77,7 @@ const rutas = [
   [/^#\/material$/, vistaMaterial, "material"],
   [/^#\/reuniones$/, vistaReuniones, "reuniones"],
   [/^#\/reunion\/(\d+)$/, vistaReunion, "reuniones"],
+  [/^#\/juntas(?:\/([123]))?$/, vistaJuntas, "juntas"],
 ];
 
 async function enrutar() {
@@ -1051,7 +1052,8 @@ async function vistaInformes() {
     vista.innerHTML = `
       <div class="cabecera"><div><h1>Informes</h1>
         <p class="sub">Informe descriptivo de cómo ha ido el trimestre («Observaciones y comentarios»): cómo se ha mostrado, actitud en las sesiones de PT y AL y evolución en cada área.
-        Se prepara un borrador con la ACI, lo completas y lo exportas a Word.</p></div>
+        Se prepara un borrador con la ACI, lo completas y lo exportas a Word.
+        Lo que apuntes en <a href="#/juntas">Juntas de evaluación</a> se puede redactar y añadir aquí con un botón.</p></div>
         <div class="acciones"><label for="tri" style="align-self:center">Trimestre</label>
           <select id="tri">${[1, 2, 3].map((t) => `<option value="${t}" ${t === trimestre ? "selected" : ""}>${t}º · ${esc(d.curso_escolar)}</option>`).join("")}</select></div></div>
       ${d.alumnos.length ? `<div class="rejilla">${filas}</div>` : `<div class="vacio">Todavía no tienes alumnos en tu perfil.</div>`}
@@ -2526,6 +2528,142 @@ async function buscarActualizacion(manual) {
   } catch (e) {
     if (manual && caja) caja.textContent = "⚠️ " + e.message;
   }
+}
+
+// ======================================================================= juntas de evaluación
+// Guardado pendiente de las notas de la junta (se hace también al salir de la pantalla)
+let GUARDAR_JUNTA = null;
+window.addEventListener("hashchange", () => { if (GUARDAR_JUNTA) GUARDAR_JUNTA(); });
+
+async function vistaJuntas(tri) {
+  const trimestre = tri ? +tri : (+leerPref("junta.trimestre", "0") || 1);
+  guardarPref("junta.trimestre", String(trimestre));
+  const J = await api("GET", `/api/juntas?trimestre=${trimestre}`);
+  const conNotas = (a) => (a.notas || "").trim();
+  const enlaceInforme = (a) => a.informe ? `<a class="boton" href="#/${a.informe.tipo === "observacion" ? "observacion" : "informe"}/${a.informe.id}">Abrir ${a.informe.tipo === "observacion" ? "informe de observación" : "informe"}</a>` : "";
+  const tarjeta = (a) => `<div class="tarjeta junta-alumno" id="ja-${a.alumno_id}">
+      <div class="fila" style="gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <div class="avatar">${esc(a.nombre[0] || "?").toUpperCase()}</div>
+        <div><div class="nombre">${esc(a.nombre)}</div><div class="muted">${esc(a.curso || "")}</div></div>
+        ${a.seguimiento === "observacion" ? `<span class="chip valoracion">En valoración · informe de observación</span>` : `<span class="chip">ACI · informe a familias</span>`}
+        <span class="muted" data-estado="${a.alumno_id}">${a.pasado ? "Pasado al informe el " + fechaES(a.pasado.slice(0, 10)) : ""}</span>
+        <span style="margin-left:auto">${botonMicro("jn-" + a.alumno_id)}</span></div>
+      <textarea id="jn-${a.alumno_id}" data-alumno="${a.alumno_id}" data-micro-lineas rows="3"
+        placeholder="- La tutora comenta que…&#10;- Le cuesta…&#10;- Le ayudan los pictogramas…">${esc(a.notas)}</textarea>
+      <div class="fila" style="gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="primario" data-redactar="${a.alumno_id}">✨ Redactar para el informe del ${trimestre}º trimestre</button>
+        ${enlaceInforme(a)}</div></div>`;
+  vista.innerHTML = `
+    <div class="cabecera"><div><h1>Juntas de evaluación</h1>
+      <p class="sub">Apunta o dicta lo que se diga de cada alumno durante la junta. Después, con <strong>✨ Redactar</strong>,
+        tus notas se convierten en un borrador más profesional, repartido por los apartados del informe del trimestre, que revisas antes de pasarlo.</p></div>
+      <div class="acciones">${selectorVista(String(trimestre), [1, 2, 3].map((t) => [String(t), `${t}º trimestre`, `#/juntas/${t}`]))}</div></div>
+    <div class="tarjeta"><div class="campos">
+        <div><label>Fecha de la junta</label><input type="date" id="j-fecha" value="${esc(J.fecha || "")}"></div>
+        <div><label>Curso escolar</label><input value="${esc(J.curso_escolar)}" disabled></div></div>
+      <details style="margin-top:10px" ${(J.notas || "").trim() ? "open" : ""}><summary><strong>Notas generales de la junta</strong> <span class="muted">(acuerdos, fechas de entrega, cosas que no son de un alumno)</span></summary>
+        <div class="notas-sesion" style="margin-top:8px"><textarea id="j-notas" data-micro-lineas rows="3">${esc(J.notas || "")}</textarea>${botonMicro("j-notas")}</div></details></div>
+    ${J.alumnos.length ? `<div class="ayuda">Escribe una idea por línea (por ejemplo «la tutora dice que participa más en la asamblea»). Se guarda sola mientras escribes.
+        El borrador nunca da nada por <strong>conseguido</strong>: eso solo sale de los ítems evaluados con C en la ACI.</div>
+      <div class="junta-indice">${J.alumnos.map((a) => `<a href="#" data-ir="${a.alumno_id}" class="chip ${conNotas(a) ? "" : "vacia"}" id="ji-${a.alumno_id}">${conNotas(a) ? "✔ " : ""}${esc(a.nombre)}</a>`).join("")}</div>
+      ${J.alumnos.map(tarjeta).join("")}`
+      : `<div class="vacio">Todavía no tienes alumnos en tu perfil.</div>`}`;
+  enlazarMicros(vista);
+
+  // Datos de la junta
+  $("#j-fecha").onchange = (e) => intentar(async () => { await api("PATCH", `/api/juntas/${J.id}`, { fecha: e.target.value }); aviso("Guardado"); });
+  const general = $("#j-notas");
+  general.onchange = () => intentar(() => api("PATCH", `/api/juntas/${J.id}`, { notas: general.value }));
+
+  // Notas por alumno con guardado automático
+  const guardados = Object.fromEntries(J.alumnos.map((a) => [a.alumno_id, a.notas || ""]));
+  const temporizadores = {};
+  const guardar = async (ta) => {
+    const id = ta.dataset.alumno;
+    clearTimeout(temporizadores[id]);
+    if (ta.value === guardados[id]) return;
+    const valor = ta.value;
+    await api("PUT", `/api/juntas/${J.id}/alumnos/${id}`, { notas: valor });
+    guardados[id] = valor;
+    const chip = $("#ji-" + id);
+    if (chip) {
+      const nombre = (J.alumnos.find((a) => String(a.alumno_id) === id) || {}).nombre || "";
+      chip.textContent = (valor.trim() ? "✔ " : "") + nombre;
+      chip.classList.toggle("vacia", !valor.trim());
+    }
+    const estado = $(`[data-estado="${id}"]`);
+    if (estado && ta.isConnected) estado.textContent = "Guardado ✔";
+  };
+  const ajustar = (ta) => { ta.style.height = "auto"; ta.style.height = Math.max(80, ta.scrollHeight + 2) + "px"; };
+  $$("textarea[data-alumno]").forEach((ta) => {
+    requestAnimationFrame(() => ajustar(ta));
+    ta.oninput = () => {
+      ajustar(ta);
+      const estado = $(`[data-estado="${ta.dataset.alumno}"]`);
+      if (estado) estado.textContent = "Guardando…";
+      clearTimeout(temporizadores[ta.dataset.alumno]);
+      temporizadores[ta.dataset.alumno] = setTimeout(() => intentar(() => guardar(ta)), 800);
+    };
+    ta.onchange = () => { ajustar(ta); intentar(() => guardar(ta)); };
+  });
+  GUARDAR_JUNTA = () => {
+    $$("textarea[data-alumno]").forEach((ta) => { if (ta.value !== guardados[ta.dataset.alumno]) guardar(ta).catch(() => aviso("No se han podido guardar las notas de la junta", true)); });
+    GUARDAR_JUNTA = null;
+  };
+  $$("[data-ir]").forEach((a) => a.onclick = (e) => {
+    e.preventDefault();
+    const t = $("#ja-" + a.dataset.ir);
+    t.scrollIntoView({ behavior: "smooth", block: "start" });
+    setTimeout(() => $("#jn-" + a.dataset.ir).focus({ preventScroll: true }), 400);
+  });
+  $$("[data-redactar]").forEach((b) => b.onclick = () => intentar(async () => {
+    const ta = $("#jn-" + b.dataset.redactar);
+    if (microActivo) await pararMicro();
+    await guardar(ta);
+    if (!ta.value.trim()) { aviso("Primero escribe o dicta las notas de la junta de este alumno."); ta.focus(); return; }
+    const al = J.alumnos.find((a) => String(a.alumno_id) === b.dataset.redactar);
+    await dialogoBorradorJunta(J, al);
+  }));
+}
+
+async function dialogoBorradorJunta(J, al) {
+  const d = await api("GET", `/api/juntas/${J.id}/alumnos/${al.alumno_id}/borrador`);
+  if (!d.apartados.length) { aviso("No he encontrado frases en las notas de este alumno."); return; }
+  const destino = d.tipo === "observacion" ? "informe de observación" : `informe del ${J.trimestre}º trimestre`;
+  dialogo.innerHTML = `<form method="dialog" id="fjunta">
+    <div class="dlg-cab"><h2>Borrador para el informe · ${esc(al.nombre)}</h2><button type="button" id="cerrar">Cerrar</button></div>
+    <div class="dlg-cuerpo">
+      <p class="muted" style="margin-top:0">He redactado tus notas de la junta y las he repartido por los apartados del ${destino}.
+        Cambia lo que quieras: al pasarlo <strong>no se borra nada</strong> del informe, se añade al final de cada apartado
+        ${d.tipo === "observacion" ? "" : "(si todavía no existe, se crea con el borrador de la ACI)"}.</p>
+      <details><summary class="muted">Ver mis notas tal cual</summary><pre class="notas-junta">${esc(al.notas || $("#jn-" + al.alumno_id).value)}</pre></details>
+      ${d.apartados.map((a, i) => `<div class="apartado-junta">
+        <label class="check"><input type="checkbox" data-incluir="${i}" checked> <strong>${esc(a.titulo)}</strong></label>
+        <textarea rows="3" data-texto="${i}">${esc(a.texto)}</textarea></div>`).join("")}
+    </div>
+    <div class="dlg-pie"><button type="button" id="copiar-junta" style="margin-right:auto">📋 Copiar texto</button>
+      <button class="primario" id="pasar-junta">Pasar al ${destino}</button></div></form>`;
+  dialogo.showModal();
+  $$("[data-texto]", dialogo).forEach((t) => { t.style.height = "auto"; t.style.height = Math.max(70, t.scrollHeight + 2) + "px"; });
+  $("#cerrar").onclick = () => dialogo.close();
+  const elegidos = () => d.apartados.map((a, i) => ({ ...a, texto: $(`[data-texto="${i}"]`).value.trim(), incluir: $(`[data-incluir="${i}"]`).checked }))
+    .filter((a) => a.incluir && a.texto);
+  $("#copiar-junta").onclick = () => intentar(async () => {
+    await navigator.clipboard.writeText(elegidos().map((a) => a.texto).join("\n\n"));
+    aviso("Texto copiado");
+  });
+  $("#fjunta").onsubmit = (e) => {
+    e.preventDefault();
+    intentar(async () => {
+      const apartados = elegidos();
+      if (!apartados.length) { aviso("No hay ningún apartado marcado con texto."); return; }
+      if (al.pasado && !confirm(`Ya pasaste la junta de ${al.nombre} al informe el ${fechaES(al.pasado.slice(0, 10))}. Lo que ya esté igual no se repite. ¿Añadir de nuevo?`)) return;
+      const r = await api("POST", `/api/juntas/${J.id}/alumnos/${al.alumno_id}/informe`, { apartados });
+      dialogo.close();
+      aviso("Añadido al informe ✔. Revísalo y retócalo a tu gusto.");
+      location.hash = r.tipo === "observacion" ? `#/observacion/${r.id}` : `#/informe/${r.id}`;
+    });
+  };
 }
 
 // ======================================================================= inicio

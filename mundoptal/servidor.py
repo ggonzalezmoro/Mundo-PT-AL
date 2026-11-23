@@ -13,7 +13,7 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 from . import (actualizador, biblioteca, calendario, claude_desktop, db as basedatos, dictado, google_drive, horario, ia_material,
-               informes, maqueta, material, mcp_server, observacion, trabajo)
+               informes, juntas, maqueta, material, mcp_server, observacion, trabajo)
 from .config import APP_NAME, APP_VERSION, COLEGIO, DIAS, ESCALA, ESCALA_TEXTO, data_dir, static_dir
 from .planificador import Planificador, lunes_de
 from .store import Store, StoreError
@@ -608,6 +608,30 @@ def crear_app(db_path: str | Path) -> Flask:
         if not inf:
             return jsonify(error="No encontrado"), 404
         return enviar_docx(informes.nombre_archivo(inf), informes.exportar_word(inf))
+
+    # ------------------------------------------------------------ juntas de evaluación
+    @app.get("/api/juntas")
+    def junta_trimestre():
+        return jsonify(juntas.obtener(store, usuario_actual(), request.args.get("trimestre"),
+                                      request.args.get("curso_escolar")))
+
+    @app.put("/api/juntas/<int:junta_id>/alumnos/<int:alumno_id>")
+    def junta_notas(junta_id, alumno_id):
+        juntas.guardar_notas(store, junta_id, alumno_id, cuerpo().get("notas", ""))
+        return jsonify(ok=True)
+
+    @app.get("/api/juntas/<int:junta_id>/alumnos/<int:alumno_id>/borrador")
+    def junta_borrador(junta_id, alumno_id):
+        uid = usuario_actual()
+        u = store.obtener_usuario(uid) if uid else None
+        return jsonify(juntas.borrador(store, junta_id, alumno_id, (u or {}).get("especialidad", "PT/AL")))
+
+    @app.post("/api/juntas/<int:junta_id>/alumnos/<int:alumno_id>/informe")
+    def junta_al_informe(junta_id, alumno_id):
+        uid = usuario_actual()
+        u = store.obtener_usuario(uid) if uid else None
+        return jsonify(juntas.pasar_al_informe(store, junta_id, alumno_id, cuerpo().get("apartados", []),
+                                               maestra=(u or {}).get("nombre", "")))
 
     # ------------------------------------------------------------ informes de observación (alumnos sin ACI)
     @app.post("/api/alumnos/<int:alumno_id>/observaciones")

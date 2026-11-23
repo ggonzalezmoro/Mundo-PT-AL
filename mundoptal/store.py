@@ -37,6 +37,7 @@ CAMPOS_EDITABLES = {
     "citas": {"fecha", "hora_inicio", "hora_fin", "tipo", "alumno_id", "con_quien", "lugar", "notas", "hecha"},
     "materiales": {"titulo"},
     "calendarios_externos": {"nombre", "color", "tipo", "visible"},
+    "juntas": {"fecha", "notas"},
 }
 
 ADAPTACIONES_POR_DEFECTO = [
@@ -239,6 +240,8 @@ class Store:
             elif tabla == "tareas" and "hecha" in cambios:
                 self.conn.execute("UPDATE tareas SET hecha_en = CASE WHEN hecha = 1 THEN CURRENT_TIMESTAMP END "
                                   "WHERE id = ?", (id_,))
+            elif tabla == "juntas":
+                self.conn.execute("UPDATE juntas SET actualizado = CURRENT_TIMESTAMP WHERE id = ?", (id_,))
             elif tabla == "informes_observacion":
                 self.conn.execute("UPDATE informes_observacion SET actualizado = CURRENT_TIMESTAMP WHERE id = ?", (id_,))
             elif tabla == "observacion_apartados":

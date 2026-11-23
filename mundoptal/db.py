@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -264,6 +264,30 @@ CREATE TABLE IF NOT EXISTS eventos_externos (
     descripcion TEXT NOT NULL DEFAULT ''
 );
 
+-- Juntas de evaluación: una por perfil, curso y trimestre, con notas por alumno que después se
+-- redactan para el informe del trimestre (informe a familias o informe de observación)
+CREATE TABLE IF NOT EXISTS juntas (
+    id INTEGER PRIMARY KEY,
+    usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+    curso_escolar TEXT NOT NULL DEFAULT '',
+    trimestre INTEGER NOT NULL DEFAULT 1 CHECK (trimestre BETWEEN 1 AND 3),
+    fecha TEXT NOT NULL DEFAULT '',
+    notas TEXT NOT NULL DEFAULT '',
+    creado TEXT DEFAULT CURRENT_TIMESTAMP,
+    actualizado TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS junta_alumnos (
+    id INTEGER PRIMARY KEY,
+    junta_id INTEGER NOT NULL REFERENCES juntas(id) ON DELETE CASCADE,
+    alumno_id INTEGER NOT NULL REFERENCES alumnos(id) ON DELETE CASCADE,
+    notas TEXT NOT NULL DEFAULT '',
+    pasado TEXT,          -- cuándo se pasó por última vez al informe
+    actualizado TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (junta_id, alumno_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_juntas_usuario ON juntas(usuario_id, curso_escolar, trimestre);
 CREATE INDEX IF NOT EXISTS ix_eventos_ext ON eventos_externos(usuario_id, inicio);
 CREATE INDEX IF NOT EXISTS ix_materiales_usuario ON materiales(usuario_id);
 CREATE INDEX IF NOT EXISTS ix_tareas_usuario ON tareas(usuario_id);
