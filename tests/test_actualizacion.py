@@ -1,6 +1,11 @@
 import io
 import json
+import os
+import shutil
 import sqlite3
+import subprocess
+import sys
+import time
 import urllib.error
 from pathlib import Path
 
@@ -99,10 +104,55 @@ def test_importar_datos_de_version_antigua(tmp_path, monkeypatch):
     assert c.get("/api/informes").status_code == 200  # las tablas nuevas existen
 
 
-def test_guion_cierra_copias_que_bloquean():
+def test_guion_aparta_bloqueados_sin_cerrar_procesos():
     g = actualizador.guion_reemplazo(1234, Path("C:/t/nuevo/MundoPTAL"), Path("C:/Programa"), Path("C:/t"))
-    # primero espera a la app, luego cierra las copias (--mcp) y después copia
-    assert g.index("PID eq 1234") < g.index("cerrar_copias.ps1") < g.index("robocopy")
-    ps = actualizador.guion_cerrar_copias(Path("C:/Mi carpeta/O'Neil/MundoPTAL"))
-    assert "MundoPTAL.exe" in ps and "Stop-Process" in ps and "O''Neil" in ps
-    assert ps.count("StartsWith($carpeta") == 1  # solo las copias de esa carpeta, no otras instalaciones
+    # primero espera a la app, luego aparta lo que está en uso y después copia;
+    # si la copia falla, restaura los archivos apartados
+    assert g.index("PID eq 1234") < g.index("-Modo apartar") < g.index("robocopy") < g.index("-Modo restaurar")
+    assert "\r\r\n" not in g
+    ps = actualizador.guion_apartar(Path("C:/t/nuevo/MundoPTAL"), Path("C:/Mi carpeta/O'Neil/MundoPTAL"), "1")
+    assert "O''Neil" in ps and "Rename-Item" in ps
+    # no se cierra ningún proceso: el servidor de Claude Desktop (--mcp) sigue funcionando
+    for orden in ("Stop-Process", "taskkill", "kill"):
+        assert orden not in ps and orden not in g
+
+
+def test_limpiar_restos(tmp_path):
+    (tmp_path / "_internal").mkdir()
+    (tmp_path / "MundoPTAL.exe").write_text("nuevo")
+    (tmp_path / "MundoPTAL.exe.viejo-20261123").write_text("viejo")
+    (tmp_path / "_internal" / "python312.dll.viejo-20261123").write_text("viejo")
+    assert actualizador.limpiar_restos(tmp_path) == 2
+    assert [p.name for p in tmp_path.rglob("*") if p.is_file()] == ["MundoPTAL.exe"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="solo en Windows")
+def test_apartar_en_uso_y_restaurar_en_windows(tmp_path):
+    """Con un programa de verdad en marcha: se aparta sin cerrarlo y se puede restaurar."""
+    origen, destino = tmp_path / "nuevo", tmp_path / "programa"
+    origen.mkdir(), destino.mkdir()
+    ping = Path(os.environ["WINDIR"]) / "System32" / "PING.EXE"
+    shutil.copy(ping, destino / "MundoPTAL.exe")
+    shutil.copy(ping, origen / "MundoPTAL.exe")
+    (destino / "libre.txt").write_text("viejo")
+    (origen / "libre.txt").write_text("nuevo")
+    guion = tmp_path / "apartar.ps1"
+    guion.write_text(actualizador.guion_apartar(origen, destino, "1"), encoding="utf-8-sig", newline="")
+
+    def ejecutar(modo):
+        subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(guion),
+                        "-Modo", modo], check=True, capture_output=True, timeout=60)
+
+    en_uso = subprocess.Popen([str(destino / "MundoPTAL.exe"), "-n", "30", "127.0.0.1"],
+                              stdout=subprocess.DEVNULL)
+    try:
+        time.sleep(0.5)
+        ejecutar("apartar")
+        assert (destino / "MundoPTAL.exe.viejo-1").exists() and not (destino / "MundoPTAL.exe").exists()
+        assert (destino / "libre.txt").exists()  # lo que no está en uso no se toca
+        assert en_uso.poll() is None  # sigue funcionando
+        ejecutar("restaurar")  # p. ej. si robocopy hubiera fallado
+        assert (destino / "MundoPTAL.exe").exists() and not (destino / "MundoPTAL.exe.viejo-1").exists()
+    finally:
+        en_uso.kill()
+        en_uso.wait()

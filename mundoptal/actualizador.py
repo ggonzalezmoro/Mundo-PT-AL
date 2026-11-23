@@ -90,30 +90,71 @@ def _buscar_nueva(raiz: Path) -> Path:
     raise ErrorActualizacion("El archivo descargado no contiene el programa.")
 
 
-def guion_cerrar_copias(destino: Path) -> str:
-    """Guion de PowerShell que cierra las otras copias del programa abiertas desde la carpeta
-    que se va a sustituir (p. ej. «MundoPTAL.exe --mcp», que abre Claude Desktop) y que
-    bloquean el .exe y sus DLL. Espera hasta 15 s a que terminen."""
-    carpeta = str(destino).rstrip("\\/") + "\\"
-    carpeta_ps = carpeta.replace("'", "''")
+SUFIJO_VIEJO = ".viejo-"  # p. ej. «MundoPTAL.exe.viejo-20261123220500»
+
+
+def _ps(texto) -> str:
+    return "'" + str(texto).replace("'", "''") + "'"
+
+
+def guion_apartar(origen: Path, destino: Path, sello: str) -> str:
+    """Guion de PowerShell para sustituir archivos que están en uso SIN cerrar a nadie.
+
+    Claude Desktop tiene abierto «MundoPTAL.exe --mcp» (el servidor de material) y eso
+    bloquea el .exe y sus DLL: no se pueden sobrescribir, pero Windows sí deja
+    renombrarlos. Con «-Modo apartar» cada archivo bloqueado que la versión nueva trae
+    se renombra a «<nombre>.viejo-<sello>» y así robocopy puede poner el nuevo en su
+    sitio; las copias abiertas siguen funcionando con el archivo viejo hasta que se
+    reinician. «-Modo restaurar» deshace el cambio si la copia ha fallado, para que el
+    programa nunca se quede sin su .exe. Los restos se borran al abrir la app
+    (limpiar_restos).
+    """
     return "\r\n".join([
+        "param([string]$Modo = 'apartar')",
         "$ErrorActionPreference = 'SilentlyContinue'",
-        f"$carpeta = '{carpeta_ps}'",
-        "function Copias { Get-CimInstance Win32_Process -Filter \"Name='MundoPTAL.exe'\" |",
-        "  Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($carpeta, [StringComparison]::OrdinalIgnoreCase) } }",
-        "for ($i = 0; $i -lt 15; $i++) {",
-        "  $c = @(Copias)",
-        "  if ($c.Count -eq 0) { break }",
-        "  $c | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
-        "  Start-Sleep -Seconds 1",
+        f"$origen = {_ps(str(origen).rstrip(chr(92) + '/'))}",
+        f"$destino = {_ps(str(destino).rstrip(chr(92) + '/'))}",
+        f"$sufijo = {_ps(SUFIJO_VIEJO + sello)}",
+        "if ($Modo -eq 'restaurar') {",
+        "  Get-ChildItem -LiteralPath $destino -Recurse -File -Filter ('*' + $sufijo) | ForEach-Object {",
+        "    $original = $_.FullName.Substring(0, $_.FullName.Length - $sufijo.Length)",
+        "    if (-not (Test-Path -LiteralPath $original)) { Rename-Item -LiteralPath $_.FullName -NewName (Split-Path $original -Leaf) }",
+        "  }",
+        "  exit 0",
+        "}",
+        "Get-ChildItem -LiteralPath $origen -Recurse -File | ForEach-Object {",
+        "  $d = Join-Path $destino $_.FullName.Substring($origen.Length).TrimStart('\\')",
+        "  if (Test-Path -LiteralPath $d) {",
+        "    try { $s = [IO.File]::Open($d, 'Open', 'ReadWrite', 'None'); $s.Close() }",
+        "    catch { Rename-Item -LiteralPath $d -NewName ((Split-Path $d -Leaf) + $sufijo) }",
+        "  }",
         "}",
         "",
     ])
 
 
+def limpiar_restos(carpeta: Path | None = None) -> int:
+    """Borra los archivos «.viejo-…» que dejó una actualización. Los que siguen en uso
+    (p. ej. por un «--mcp» que aún no se ha reiniciado) se quedan para la próxima vez."""
+    if carpeta is None:
+        if not puede_instalar():
+            return 0
+        carpeta = carpeta_programa()
+    borrados = 0
+    for f in Path(carpeta).rglob(f"*{SUFIJO_VIEJO}*"):
+        try:
+            if f.is_file():
+                f.unlink()
+                borrados += 1
+        except OSError:
+            pass
+    return borrados
+
+
 def guion_reemplazo(pid: int, origen: Path, destino: Path, temporal: Path) -> str:
-    """Guion .bat que espera a que se cierre la aplicación, cierra las copias que bloquean
-    la carpeta, copia la versión nueva y la abre."""
+    """Guion .bat que espera a que se cierre la aplicación, aparta los archivos en uso
+    (sin cerrar ningún proceso), copia la versión nueva y la abre."""
+    ps = f'powershell -NoProfile -ExecutionPolicy Bypass -File "{temporal / "apartar.ps1"}"'
     return "\r\n".join([
         "@echo off",
         "chcp 65001 >nul",
@@ -123,9 +164,12 @@ def guion_reemplazo(pid: int, origen: Path, destino: Path, temporal: Path) -> st
         "  ping -n 2 127.0.0.1 >nul",
         "  goto espera",
         ")",
-        f'powershell -NoProfile -ExecutionPolicy Bypass -File "{temporal / "cerrar_copias.ps1"}" >nul 2>&1',
-        f'robocopy "{origen}" "{destino}" /E /R:10 /W:2 /NFL /NDL /NJH /NJS /NP >nul',
-        f'if errorlevel 8 echo No se pudo copiar la version nueva > "{temporal}\\error.txt"',
+        f"{ps} -Modo apartar >nul 2>&1",
+        f'robocopy "{origen}" "{destino}" /E /R:3 /W:2 /NFL /NDL /NJH /NJS /NP >nul',
+        "if errorlevel 8 (",
+        f'  echo No se pudo copiar la version nueva > "{temporal}\\error.txt"',
+        f"  {ps} -Modo restaurar >nul 2>&1",
+        ")",
         f'start "" "{destino / EXE}"',
         f'rmdir /s /q "{temporal / "nuevo"}"',
         f'del /q "{temporal / NOMBRE_ZIP}"',
@@ -155,9 +199,13 @@ def instalar(url: str, abrir=_pedir, salir=None) -> dict:
     except (urllib.error.URLError, OSError, zipfile.BadZipFile) as e:
         raise ErrorActualizacion("No se ha podido descargar la versión nueva. Prueba otra vez.") from e
     origen = _buscar_nueva(temporal / "nuevo")
-    (temporal / "cerrar_copias.ps1").write_text(guion_cerrar_copias(destino), encoding="utf-8-sig")
+    sello = time.strftime("%Y%m%d%H%M%S")
+    # newline="": los guiones ya llevan \r\n. PowerShell 5.1 necesita el BOM para las tildes.
+    (temporal / "apartar.ps1").write_text(guion_apartar(origen, destino, sello),
+                                          encoding="utf-8-sig", newline="")
     guion = temporal / "actualizar.bat"
-    guion.write_text(guion_reemplazo(os.getpid(), origen, destino, temporal), encoding="utf-8")
+    guion.write_text(guion_reemplazo(os.getpid(), origen, destino, temporal),
+                     encoding="utf-8", newline="")
     subprocess.Popen(
         ["cmd", "/c", str(guion)], cwd=str(temporal), close_fds=True,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),

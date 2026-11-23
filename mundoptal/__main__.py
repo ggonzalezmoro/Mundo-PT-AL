@@ -104,6 +104,10 @@ def main(argv: list[str] | None = None) -> int:
         from . import mcp_server
         return mcp_server.main([a for a in argv if a != "--mcp"])
     _configurar_log()
+    # Restos «.viejo-…» de una actualización (archivos que estaban en uso). En segundo
+    # plano y sin errores: si alguno sigue en uso se borra en otra ocasión.
+    from . import actualizador
+    threading.Thread(target=actualizador.limpiar_restos, daemon=True).start()
     if _valor(argv, "--perfil"):
         return configurar_desde_consola(argv)
     app = crear_app(db_path())
