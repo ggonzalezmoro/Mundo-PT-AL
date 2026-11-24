@@ -519,3 +519,40 @@ label.check[hidden] { display: none; }
 .todos-alumnos { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
 .todos-alumnos label { margin: 0; }
 .todos-alumnos select { width: auto; }
+
+/* ---------------------------------------------------------------- expediente privado */
+.acceso-privado { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  border-left: 4px solid var(--verde); background: linear-gradient(90deg, #eef5e9, var(--blanco) 60%); }
+.acceso-privado h2 { margin-bottom: 2px; }
+.acceso-privado p { margin: 0; }
+.aviso-privado { background: #eef5e9; border: 1px solid var(--verde-claro); color: var(--verde-2); border-radius: var(--radio);
+  padding: 8px 14px; margin-bottom: 16px; font-size: 13px; }
+.privado-candado { max-width: 720px; }
+.privado-lista { padding-left: 20px; line-height: 1.55; }
+.privado-lista li { margin-bottom: 4px; }
+.fila-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+.fila-form input[type=password], .fila-form input:not([type]) { flex: 1 1 240px; }
+.privado-olvido { margin-top: 14px; }
+.privado-olvido summary { cursor: pointer; color: var(--verde); font-weight: 600; margin-bottom: 10px; }
+.codigo-recuperacion { font-family: Consolas, "Courier New", monospace; font-size: 22px; letter-spacing: 2px; text-align: center;
+  background: var(--amarillo); border: 2px dashed #d6b656; border-radius: 8px; padding: 14px; user-select: all; }
+.privado-dialogo { max-width: 560px; padding: 22px 24px; }
+.tabla-docs td { vertical-align: top; }
+.tabla-docs .acciones-doc { white-space: nowrap; text-align: right; }
+.notas-doc { font-size: 12px; margin-top: 4px; color: var(--texto-2); white-space: pre-wrap; }
+.subir-doc { margin-top: 16px; padding-top: 12px; border-top: 1px dashed var(--borde); }
+.subir-doc h3 { margin: 0 0 8px; font-size: 15px; }
+.privado-ajustes summary { cursor: pointer; list-style: none; }
+.privado-ajustes summary h2 { display: inline; }
+.privado-ajustes summary::before { content: "▸ "; color: var(--verde); }
+.privado-ajustes[open] summary::before { content: "▾ "; }
+.rejilla-privado { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; margin-top: 12px; }
+.rejilla-privado form label, .rejilla-privado form input { display: block; width: 100%; }
+.rejilla-privado h3 { font-size: 15px; margin: 0 0 8px; }
+dialog.dialogo-visor { width: min(1100px, 96vw); height: 92vh; padding: 0; }
+.visor-doc { display: flex; flex-direction: column; height: 100%; }
+.visor-cab { display: flex; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--borde); }
+.visor-cab button { margin-left: auto; }
+.visor-cuerpo { flex: 1; overflow: auto; background: #555; display: flex; justify-content: center; }
+.visor-cuerpo iframe { width: 100%; height: 100%; border: 0; background: var(--blanco); }
+.visor-cuerpo img { max-width: 100%; height: auto; align-self: flex-start; }

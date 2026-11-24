@@ -104,6 +104,21 @@ se abre en solo lectura; solo se registra el material creado.
 Arranque a mano: `MundoPTAL.exe --mcp` o, desde el código, `python -m mundoptal.mcp_server`.
 Si se cambia la aplicación de carpeta, hay que volver a pulsar «Configurar Claude Desktop».
 
+## Expediente privado (informes médicos y diagnóstico)
+
+En la ficha de cada alumno, «🔒 Expediente privado» guarda los informes oficiales (psiquiatría, neurología,
+gabinetes, Orientación…) y un resumen del diagnóstico actual. Son datos de salud de menores, así que:
+
+- Van en un archivo aparte por perfil (`%APPDATA%\MundoPTAL\privado\perfil_<id>.mpx`), **cifrado con
+  AES-256-GCM** con una clave que se protege con la contraseña de la maestra (scrypt) y con un código de
+  recuperación que se muestra una sola vez. Sin contraseña ni código no se puede recuperar.
+- No salen en «Exportar mis datos», en las copias de seguridad normales, en el servidor MCP de Claude Desktop
+  ni en las rutas genéricas de la API. Para llevarlo a otro ordenador: «Exportar expediente privado» (.mpx,
+  sigue cifrado) e «Importar» allí con la misma contraseña (después de importar los datos normales).
+- Se cierra solo a los 10 minutos sin usarlo y al cerrar el programa. Los Word que se abren con otro
+  programa se descifran en una carpeta temporal que se borra al cerrar el expediente.
+- Nunca subas documentos reales al repositorio ni a ninguna carpeta sincronizada.
+
 ## Para desarrolladores
 
 Requisitos: Windows 10/11 y Python 3.11 o superior.

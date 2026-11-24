@@ -5,6 +5,7 @@ import datetime as dt
 import json
 import os
 import re
+import secrets
 import sqlite3
 import subprocess
 import tempfile
@@ -13,7 +14,7 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 from . import (actualizador, biblioteca, calendario, claude_desktop, db as basedatos, dictado, google_drive, horario, ia_material,
-               informes, juntas, maqueta, material, mcp_server, observacion, trabajo)
+               informes, juntas, maqueta, material, mcp_server, observacion, privado, trabajo)
 from .config import APP_NAME, APP_VERSION, COLEGIO, DIAS, ESCALA, ESCALA_TEXTO, data_dir, static_dir
 from .planificador import Planificador, lunes_de
 from .store import Store, StoreError
@@ -495,7 +496,10 @@ def crear_app(db_path: str | Path) -> Flask:
 
     @app.delete("/api/<tabla>/<int:id_>")
     def borrar(tabla, id_):
+        dueno = store.q1("SELECT usuario_id FROM alumnos WHERE id = ?", (id_,)) if tabla == "alumnos" else None
         store.borrar(tabla, id_)
+        if dueno:  # su expediente privado se borra con él
+            privados.de(dueno["usuario_id"]).borrar_alumno(id_)
         return jsonify(ok=True)
 
     @app.post("/api/<tabla>/<int:id_>/mover")
@@ -877,5 +881,171 @@ def crear_app(db_path: str | Path) -> Flask:
         url = cuerpo().get("url") or actualizador.comprobar().get("url")
         copia_interna(f"_antes_de_{APP_VERSION}")
         return jsonify(actualizador.instalar(url))
+
+    # ------------------------------------------------------------ expediente privado (cifrado)
+    # Informes médicos y diagnóstico: archivo aparte y cifrado por perfil (ver privado.py). Además de la
+    # contraseña, cada petición lleva un testigo que solo conoce la ventana que lo abrió y se comprueba que
+    # la petición va a 127.0.0.1/localhost (contra páginas web maliciosas que intenten llamar a la app).
+    privados = privado.Gestor(Path(db_path).parent / "privado")
+    privados.limpiar_temporales()
+    app.extensions["privados"] = privados
+    testigos: dict[int, str] = {}
+
+    @app.errorhandler(privado.ErrorPrivado)
+    def _error_privado(e):
+        return jsonify(error=str(e), bloqueado=isinstance(e, privado.Bloqueado)), 423 if isinstance(e, privado.Bloqueado) else 400
+
+    def exp_privado(con_testigo: bool = True) -> privado.Expediente:
+        if request.host.split(":")[0] not in ("127.0.0.1", "localhost"):
+            raise privado.ErrorPrivado("Acceso no permitido")
+        uid = usuario_actual()
+        exp = privados.de(uid)
+        if con_testigo:
+            esperado = testigos.get(int(uid or 0))
+            if not exp.abierto() or not esperado or not secrets.compare_digest(request.headers.get("X-Privado", ""), esperado):
+                raise privado.Bloqueado("El expediente privado está cerrado. Escribe tu contraseña para abrirlo.")
+        return exp
+
+    def nuevo_testigo() -> str:
+        t = secrets.token_urlsafe(32)
+        testigos[int(usuario_actual() or 0)] = t
+        return t
+
+    def sin_cache(resp: Response) -> Response:
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    @app.get("/api/privado/estado")
+    def privado_estado():
+        exp = exp_privado(con_testigo=False)
+        return jsonify(**exp.estado(), tipos=list(privado.TIPOS_DOC.items()), campos=list(privado.CAMPOS_FICHA.items()),
+                       min_contrasena=privado.MIN_CONTRASENA, documentos_por_alumno=exp.resumen())
+
+    @app.post("/api/privado/configurar")
+    def privado_configurar():
+        codigo = exp_privado(con_testigo=False).configurar(cuerpo().get("contrasena", ""))
+        return jsonify(codigo=codigo, testigo=nuevo_testigo())
+
+    @app.post("/api/privado/abrir")
+    def privado_abrir():
+        d = cuerpo()
+        exp = exp_privado(con_testigo=False)
+        if d.get("nueva"):  # contraseña olvidada: se entra con el código de recuperación y se pone otra
+            exp.cambiar_contrasena(d["nueva"], codigo=d.get("codigo", ""))
+        else:
+            exp.abrir(contrasena=d.get("contrasena", ""), codigo=d.get("codigo", ""))
+        return jsonify(testigo=nuevo_testigo(), **exp.estado())
+
+    @app.post("/api/privado/cerrar")
+    def privado_cerrar():
+        exp_privado(con_testigo=False).cerrar()
+        testigos.pop(int(usuario_actual() or 0), None)
+        privados.limpiar_temporales()
+        return jsonify(ok=True)
+
+    @app.post("/api/privado/contrasena")
+    def privado_contrasena():
+        d = cuerpo()
+        exp = exp_privado()
+        exp.cambiar_contrasena(d.get("nueva", ""), actual=d.get("actual", ""))
+        return jsonify(ok=True)
+
+    @app.post("/api/privado/codigo")
+    def privado_codigo():
+        return jsonify(codigo=exp_privado().nuevo_codigo_recuperacion(cuerpo().get("contrasena", "")))
+
+    def alumno_propio(alumno_id: int) -> dict:
+        al = store.obtener_alumno(alumno_id)
+        uid = usuario_actual()
+        if not al or (uid is not None and al.get("usuario_id") not in (None, uid)):
+            raise StoreError("Alumno no encontrado")
+        return al
+
+    @app.get("/api/privado/alumnos/<int:alumno_id>")
+    def privado_alumno(alumno_id):
+        exp = exp_privado()
+        al = alumno_propio(alumno_id)
+        return sin_cache(jsonify(alumno={"id": al["id"], "nombre": al["nombre"], "curso": al["curso"]},
+                                 ficha=exp.ficha(alumno_id), documentos=exp.documentos(alumno_id), **exp.estado()))
+
+    @app.put("/api/privado/alumnos/<int:alumno_id>/ficha")
+    def privado_ficha(alumno_id):
+        exp = exp_privado()
+        alumno_propio(alumno_id)
+        return sin_cache(jsonify(exp.guardar_ficha(alumno_id, cuerpo())))
+
+    @app.post("/api/privado/alumnos/<int:alumno_id>/documentos")
+    def privado_subir(alumno_id):
+        exp = exp_privado()
+        alumno_propio(alumno_id)
+        archivos = request.files.getlist("archivo")
+        if not archivos:
+            raise privado.ErrorPrivado("Elige el documento que quieres guardar")
+        meta = {k: request.form.get(k, "") for k in ("titulo", "tipo", "profesional", "fecha", "notas")}
+        ids = []
+        for f in archivos:
+            m = dict(meta)
+            if len(archivos) > 1:
+                m["titulo"] = ""  # con varios a la vez, cada uno con su nombre
+            ids.append(exp.anadir_documento(alumno_id, f.filename or "documento", f.mimetype, f.read(), m))
+        return jsonify(ids=ids)
+
+    @app.patch("/api/privado/documentos/<int:doc_id>")
+    def privado_editar(doc_id):
+        exp = exp_privado()
+        meta, _ = exp.leer_documento(doc_id)
+        alumno_propio(meta["alumno_id"])
+        return sin_cache(jsonify(exp.editar_documento(doc_id, cuerpo())))
+
+    @app.delete("/api/privado/documentos/<int:doc_id>")
+    def privado_borrar(doc_id):
+        exp = exp_privado()
+        meta, _ = exp.leer_documento(doc_id)
+        alumno_propio(meta["alumno_id"])
+        exp.borrar_documento(doc_id)
+        return jsonify(ok=True)
+
+    @app.get("/api/privado/documentos/<int:doc_id>")
+    def privado_ver(doc_id):
+        """El documento descifrado, para verlo dentro del programa (no se guarda en el disco)."""
+        exp = exp_privado()
+        meta, datos = exp.leer_documento(doc_id)
+        alumno_propio(meta["alumno_id"])
+        resp = Response(datos, mimetype=meta.get("mime") or "application/octet-stream")
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        return sin_cache(resp)
+
+    @app.post("/api/privado/documentos/<int:doc_id>/abrir")
+    def privado_abrir_fuera(doc_id):
+        """Para Word u otros formatos: copia temporal descifrada que se borra al cerrar el expediente."""
+        exp = exp_privado()
+        meta, datos = exp.leer_documento(doc_id)
+        alumno_propio(meta["alumno_id"])
+        carpeta = privados.carpeta_temporal() / secrets.token_hex(4)
+        carpeta.mkdir(parents=True, exist_ok=True)
+        nombre = re.sub(r'[\\/:*?"<>|]+', "_", meta.get("nombre") or "documento")
+        ruta = carpeta / nombre
+        ruta.write_bytes(datos)
+        return jsonify(abierto=abrir_archivo(ruta), ruta=str(ruta))
+
+    @app.get("/api/privado/exportar")
+    def privado_exportar():
+        datos = exp_privado().exportar()
+        nombre = f"MundoPTAL_expediente_privado_{dt.datetime.now():%Y-%m-%d_%H%M}.mpx"
+        if request.args.get("guardar") == "1":
+            ruta = carpeta_documentos() / nombre
+            ruta.write_bytes(datos)
+            return jsonify(ruta=str(ruta))
+        return Response(datos, mimetype="application/octet-stream",
+                        headers={"Content-Disposition": f'attachment; filename="{nombre}"', "Cache-Control": "no-store"})
+
+    @app.post("/api/privado/importar")
+    def privado_importar():
+        exp = exp_privado(con_testigo=False)
+        archivo = request.files.get("archivo")
+        if not archivo:
+            raise privado.ErrorPrivado("Elige el archivo .mpx del expediente privado")
+        previo = exp.importar(archivo.read(), request.form.get("contrasena", ""))
+        return jsonify(testigo=nuevo_testigo(), copia_previa=str(previo) if previo else "", **exp.estado())
 
     return app

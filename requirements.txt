@@ -8,6 +8,8 @@ sounddevice==0.5.2
 python-pptx==1.0.2
 anthropic==2.8.0
 keyring==25.7.0
+# Expediente privado (informes médicos): cifrado AES-256-GCM
+cryptography==46.0.3
 icalendar==7.3.0
 recurring-ical-events==3.8.2
 tzdata==2026.6

@@ -18,7 +18,7 @@ if Path("models").exists():
 # almacén por metadatos, así que se copian también los de win32ctypes)
 for paquete in ("vosk", "_sounddevice_data", "webview", "docx", "openpyxl", "pptx", "anthropic", "keyring",
                 "win32ctypes", "jaraco", "icalendar", "recurring_ical_events", "x_wr_timezone", "tzdata",
-                "mcp", "pydantic_settings", "sse_starlette", "httpx_sse"):
+                "mcp", "cryptography", "pydantic_settings", "sse_starlette", "httpx_sse"):
     try:
         d, b, h = collect_all(paquete)
         datas += d

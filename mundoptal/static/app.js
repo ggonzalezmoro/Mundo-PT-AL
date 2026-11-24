@@ -78,6 +78,7 @@ const rutas = [
   [/^#\/reuniones$/, vistaReuniones, "reuniones"],
   [/^#\/reunion\/(\d+)$/, vistaReunion, "reuniones"],
   [/^#\/juntas(?:\/([123]))?(?:\/(\d+))?$/, vistaJuntas, "alumnos"],
+  [/^#\/privado\/(\d+)$/, (id) => vistaPrivado(id), "alumnos"],  // en privado.js
 ];
 
 async function enrutar() {
@@ -133,7 +134,7 @@ async function vistaAlumnos() {
       <div class="campos">
         <div><label>Nombre</label><input name="nombre" required placeholder="Nombre del alumno"></div>
         <div><label>Curso</label><input name="curso" placeholder="p. ej. 2º Curso del 2º Ciclo de Educación Infantil"></div>
-        <div class="campo-ancho"><label>Observaciones</label><input name="observaciones" placeholder="Diagnóstico, apoyos, etc. (opcional)"></div>
+        <div class="campo-ancho"><label>Observaciones</label><input name="observaciones" placeholder="Apoyos, etc. (opcional; el diagnóstico va en su expediente privado)"></div>
         <div class="campo-ancho"><label class="check"><input type="checkbox" name="valoracion" id="nuevo-valoracion">
           En valoración, <strong>sin ACI</strong>: solo se hará un informe de observación de cómo se muestra en las sesiones</label></div>
       </div>
@@ -241,9 +242,13 @@ async function vistaAlumno(id) {
         <div><label>Seguimiento</label><select data-tabla="alumnos" data-id="${a.id}" data-campo="seguimiento" id="seguimiento">
           <option value="aci" ${obs ? "" : "selected"}>Con ACI</option>
           <option value="observacion" ${obs ? "selected" : ""}>En valoración, sin ACI (informe de observación)</option></select></div>
-        <div class="campo-ancho"><label>Observaciones</label><textarea data-tabla="alumnos" data-id="${a.id}" data-campo="observaciones" rows="2">${esc(a.observaciones)}</textarea></div>
+        <div class="campo-ancho"><label>Observaciones</label><textarea data-tabla="alumnos" data-id="${a.id}" data-campo="observaciones" rows="2">${esc(a.observaciones)}</textarea>
+          <p class="muted" style="margin:4px 0 0">No escribas aquí diagnósticos ni datos médicos: van en el 🔒 expediente privado.</p></div>
       </div>
       <p style="margin:12px 0 0"><button class="peligro" id="borrar-alumno">Borrar alumno y todas sus ACIs</button></p></div>
+    <div class="tarjeta acceso-privado"><div><h2>🔒 Expediente privado</h2>
+      <p class="muted">Informes de psiquiatría, neurología, gabinetes… y el diagnóstico actual. Cifrado con tu contraseña: solo tú puedes abrirlo.</p></div>
+      <a class="boton" href="#/privado/${a.id}">Abrir expediente privado</a></div>
     ${obs ? tarjetaObservaciones : ""}
     <div class="tarjeta" id="asistencia"><h2>Asistencia a las sesiones</h2><p class="muted">Cargando…</p></div>
     <div class="tarjeta"><h2>Informes para la familia</h2>
@@ -287,7 +292,7 @@ async function vistaAlumno(id) {
   $$("[data-cita-alumno]").forEach((b) => b.onclick = () =>
     dialogoCita(a.citas.find((c) => String(c.id) === b.dataset.citaAlumno), alumnosCita, () => vistaAlumno(id)));
   $("#borrar-alumno").onclick = () => intentar(async () => {
-    if (!confirm(`¿Seguro que quieres borrar a ${a.nombre} y todas sus ACIs y sesiones? No se puede deshacer.`)) return;
+    if (!confirm(`¿Seguro que quieres borrar a ${a.nombre} y todas sus ACIs, sesiones y su expediente privado? No se puede deshacer.`)) return;
     await api("DELETE", `/api/alumnos/${id}`);
     location.hash = "#/alumnos";
   });
