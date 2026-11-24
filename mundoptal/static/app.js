@@ -70,14 +70,14 @@ const rutas = [
   [/^#\/agenda(?:\/(dia|semana))?(?:\/(\d{4}-\d{2}-\d{2}))?$/, vistaAgenda, "agenda"],
   [/^#\/ajustes$/, vistaAjustes, "ajustes"],
   [/^#\/perfiles$/, vistaPerfiles, "perfiles"],
-  [/^#\/informes$/, vistaInformes, "informes"],
-  [/^#\/informe\/(\d+)$/, vistaInforme, "informes"],
-  [/^#\/observacion\/(\d+)$/, vistaObservacion, "informes"],
+  [/^#\/informes$/, vistaInformes, "alumnos"],
+  [/^#\/informe\/(\d+)$/, vistaInforme, "alumnos"],
+  [/^#\/observacion\/(\d+)$/, vistaObservacion, "alumnos"],
   [/^#\/trabajo(?:\/(dia|semana|mes))?(?:\/(\d{4}-\d{2}(?:-\d{2})?))?$/, vistaTrabajo, "trabajo"],
   [/^#\/material$/, vistaMaterial, "material"],
   [/^#\/reuniones$/, vistaReuniones, "reuniones"],
   [/^#\/reunion\/(\d+)$/, vistaReunion, "reuniones"],
-  [/^#\/juntas(?:\/([123]))?$/, vistaJuntas, "juntas"],
+  [/^#\/juntas(?:\/([123]))?(?:\/(\d+))?$/, vistaJuntas, "alumnos"],
 ];
 
 async function enrutar() {
@@ -101,13 +101,27 @@ async function enrutar() {
 window.addEventListener("hashchange", () => { vista.scrollTop = 0; enrutar(); });
 
 // ======================================================================= alumnos
+// Igual que informes.trimestre_actual(): sep-dic 1º, ene-mar 2º, abr-ago 3º
+function trimestreActual() { const m = new Date().getMonth() + 1; return m >= 9 ? 1 : m <= 3 ? 2 : 3; }
+
+// Trimestre elegido en «Alumnos y ACIs» (null = el trimestre actual)
+let TRIMESTRE_ALUMNOS = null;
+
 async function vistaAlumnos() {
-  const alumnos = await api("GET", "/api/alumnos");
+  const [alumnos, inf] = await Promise.all([api("GET", "/api/alumnos"), api("GET", "/api/informes")]);
+  const trimestre = TRIMESTRE_ALUMNOS || inf.trimestre;
+  const J = await api("GET", `/api/juntas?trimestre=${trimestre}`).catch(() => ({ alumnos: [] }));
+  const extra = {
+    trimestre, curso_escolar: inf.curso_escolar,
+    informes: Object.fromEntries(inf.alumnos.map((a) => [a.id, a])),
+    junta: Object.fromEntries((J.alumnos || []).map((a) => [a.alumno_id, a])),
+  };
   const enValoracion = alumnos.filter((a) => a.seguimiento === "observacion");
   const conACI = alumnos.filter((a) => a.seguimiento !== "observacion");
+  const tarjeta = (a) => tarjetaAlumno(a, extra);
   vista.innerHTML = `
     <div class="cabecera">
-      <div><h1>Alumnos y ACIs</h1><p class="sub">Crea un alumno y su Adaptación Curricular Individual, o importa una ACI que ya tengas en Word.</p></div>
+      <div><h1>Alumnos y ACIs</h1><p class="sub">Desde la tarjeta de cada alumno abres su ACI, su informe final del trimestre y sus notas de la junta de evaluación.</p></div>
       <div class="acciones">
         <label class="boton" for="importar">📄 Importar ACI desde Word</label>
         <input type="file" id="importar" accept=".docx" hidden>
@@ -126,10 +140,25 @@ async function vistaAlumnos() {
       <p class="acciones" style="margin:12px 0 0"><button class="primario" id="guardar-alumno">Guardar y crear ACI</button><button type="button" id="cancelar">Cancelar</button></p>
     </form>
     ${!alumnos.length ? `<div class="vacio">Todavía no hay alumnos. Pulsa «Nuevo alumno» o importa una ACI desde Word.</div>`
-      : `<div class="rejilla">${conACI.map(tarjetaAlumno).join("")}</div>
+      : `<div class="todos-alumnos"><label for="tri-alumnos">Trimestre</label>
+          <select id="tri-alumnos">${[1, 2, 3].map((t) => `<option value="${t}" ${t === trimestre ? "selected" : ""}>${t}º · ${esc(inf.curso_escolar)}</option>`).join("")}</select>
+          <span class="muted" style="margin-left:12px">Todos los alumnos a la vez:</span>
+          <a class="boton mini" href="#/juntas/${trimestre}">🧑‍🏫 Junta de evaluación del ${trimestre}º trimestre</a>
+          <a class="boton mini" href="#/informes">📝 Informes de todos</a></div>
+        <div class="rejilla">${conACI.map(tarjeta).join("")}</div>
         ${enValoracion.length ? `<h2 class="seccion-alumnos">En valoración, sin ACI (${enValoracion.length})</h2>
           <p class="muted">Alumnos que vienen a las sesiones mientras se les valora. No tienen ACI: de ellos se hace un <strong>informe de observación</strong>.</p>
-          <div class="rejilla">${enValoracion.map(tarjetaAlumno).join("")}</div>` : ""}`}`;
+          <div class="rejilla">${enValoracion.map(tarjeta).join("")}</div>` : ""}`}`;
+  if ($("#tri-alumnos")) $("#tri-alumnos").onchange = (e) => { TRIMESTRE_ALUMNOS = +e.target.value; vistaAlumnos(); };
+  $$("[data-crear-informe]").forEach((b) => b.onclick = () => crearInforme(b.dataset.crearInforme, trimestre, inf.curso_escolar));
+  $$("[data-crear-obs]").forEach((b) => b.onclick = () => intentar(async () => {
+    const r = await api("POST", `/api/alumnos/${b.dataset.crearObs}/observaciones`, {});
+    location.hash = `#/observacion/${r.id}`;
+  }));
+  $$("[data-crear-aci]").forEach((b) => b.onclick = () => intentar(async () => {
+    const r = await api("POST", `/api/alumnos/${b.dataset.crearAci}/acis`, {});
+    location.hash = `#/aci/${r.id}`;
+  }));
   $("#nuevo-valoracion").onchange = (e) => { $("#guardar-alumno").textContent = e.target.checked ? "Guardar alumno" : "Guardar y crear ACI"; };
 
   const form = $("#form-alumno");
@@ -149,17 +178,31 @@ async function vistaAlumnos() {
   $("#importar").onchange = (e) => importarWord(e.target.files[0]);
 }
 
-function tarjetaAlumno(a) {
+function tarjetaAlumno(a, extra) {
   const obs = a.seguimiento === "observacion";
+  const t = extra.trimestre;
+  const inf = ((extra.informes[a.id] || {}).informes || []).find((x) => x.trimestre === t && x.curso_escolar === extra.curso_escolar);
+  const ultObs = ((extra.informes[a.id] || {}).observaciones || [])[0];
+  const ja = extra.junta[a.id] || {};
+  const notasJunta = (ja.notas || "").trim();
+  const acceso = (ico, titulo, estado, boton) => `<div class="acceso"><span class="ico">${ico}</span>
+      <div class="acceso-texto"><strong>${titulo}</strong><span class="muted">${estado}</span></div>${boton}</div>`;
+  const filaACI = obs
+    ? acceso("🔍", "Informe de observación", ultObs ? `Del ${esc(fechaES(ultObs.fecha))}` : "Sin empezar",
+        ultObs ? `<a class="boton mini primario" href="#/observacion/${ultObs.id}">Abrir</a>` : `<button class="mini" data-crear-obs="${a.id}">Crear</button>`)
+    : acceso("📋", "ACI", a.aci_vigente_id ? `${a.num_acis} ACI${a.num_acis === 1 ? "" : "s"} · abre la vigente` : "Sin ACI todavía",
+        a.aci_vigente_id ? `<a class="boton mini primario" href="#/aci/${a.aci_vigente_id}">Abrir</a>` : `<button class="mini" data-crear-aci="${a.id}">Crear</button>`);
+  const filaInforme = obs ? "" : acceso("📝", `Informe final ${t}º trimestre`, inf ? `Empezado · ${esc(fechaES(inf.actualizado.slice(0, 10)))}` : "Sin empezar",
+    inf ? `<a class="boton mini primario" href="#/informe/${inf.id}">Abrir</a>` : `<button class="mini" data-crear-informe="${a.id}">Crear</button>`);
+  const filaJunta = acceso("🧑‍🏫", `Junta de evaluación ${t}º`,
+    ja.pasado ? `Pasada al informe · ${esc(fechaES(ja.pasado.slice(0, 10)))}` : notasJunta ? "Con notas ✔" : "Sin notas",
+    `<a class="boton mini ${notasJunta ? "primario" : ""}" href="#/juntas/${t}/${a.id}">${notasJunta ? "Abrir" : "Apuntar"}</a>`);
   return `<div class="tarjeta alumno ${obs ? "en-valoracion" : ""}">
     <div class="fila"><div class="avatar">${esc(a.nombre[0] || "?").toUpperCase()}</div>
-      <div><div class="nombre">${esc(a.nombre)}</div><div class="muted">${esc(a.curso || "Curso sin indicar")}</div></div></div>
-    <div>${obs ? `<span class="chip valoracion">En valoración · sin ACI</span>` : `<span class="chip">${a.num_acis} ACI${a.num_acis === 1 ? "" : "s"}</span>`}</div>
-    <div class="botones">
-      ${obs ? `<a class="boton primario" href="#/alumno/${a.id}">Informe de observación</a>` : ""}
-      ${!obs && a.aci_vigente_id ? `<a class="boton primario" href="#/aci/${a.aci_vigente_id}">Abrir ACI</a>` : ""}
-      <a class="boton" href="#/alumno/${a.id}">Ficha</a>
-    </div></div>`;
+      <div style="flex:1"><div class="nombre">${esc(a.nombre)}</div><div class="muted">${esc(a.curso || "Curso sin indicar")}</div></div>
+      <a class="boton mini" href="#/alumno/${a.id}" title="Datos, asistencia, tutorías y todos sus documentos">Ficha</a></div>
+    ${obs ? `<div><span class="chip valoracion">En valoración · sin ACI</span></div>` : ""}
+    <div class="accesos">${filaACI}${filaInforme}${filaJunta}</div></div>`;
 }
 
 async function importarWord(archivo, alumnoId) {
@@ -208,7 +251,8 @@ async function vistaAlumno(id) {
         ${a.informes.map((x) => `<tr><td>${x.trimestre}º trimestre</td><td>${esc(x.curso_escolar)}</td><td>${esc(x.actualizado)}</td>
           <td><a class="boton mini" href="#/informe/${x.id}">Abrir</a></td></tr>`).join("")}</table>`
         : `<div class="vacio">Sin informes todavía.</div>`}
-      <p style="margin:12px 0 0"><button id="nuevo-informe">📝 Informe del trimestre actual</button></p></div>
+      <p style="margin:12px 0 0"><button id="nuevo-informe">📝 Informe del trimestre actual</button>
+        <a class="boton" href="#/juntas/${TRIMESTRE_ALUMNOS || trimestreActual()}/${a.id}" id="ir-junta">🧑‍🏫 Notas de la junta de evaluación</a></p></div>
     <div class="tarjeta"><h2>Tutorías y reuniones</h2>
       ${(a.citas || []).length ? `<ul class="lista-citas">${a.citas.map((c) => `<li>
           <button type="button" class="cita ${c.tipo} ${c.hecha ? "hecha" : ""}" data-cita-alumno="${c.id}">${esc(TRABAJO.tipos_cita[c.tipo] || "Cita")}</button>
@@ -1050,6 +1094,7 @@ async function vistaInformes() {
           : `<button class="primario" data-crear="${a.id}">Crear informe</button>`}</div></div>`;
     }).join("");
     vista.innerHTML = `
+      <div class="migas"><a href="#/alumnos">Alumnos</a> › Informes de todos</div>
       <div class="cabecera"><div><h1>Informes</h1>
         <p class="sub">Informe descriptivo de cómo ha ido el trimestre («Observaciones y comentarios»): cómo se ha mostrado, actitud en las sesiones de PT y AL y evolución en cada área.
         Se prepara un borrador con la ACI, lo completas y lo exportas a Word.
@@ -1087,7 +1132,7 @@ async function vistaInforme(id) {
   const I = INFORME;
   const esp = (USUARIO && USUARIO.especialidad) || "PT/AL";
   vista.innerHTML = `
-    <div class="migas"><a href="#/informes">Informes</a> › <a href="#/alumno/${I.alumno_id}">${esc(I.alumno_nombre)}</a> › ${I.trimestre}º trimestre</div>
+    <div class="migas"><a href="#/alumnos">Alumnos</a> › <a href="#/alumno/${I.alumno_id}">${esc(I.alumno_nombre)}</a> › ${I.trimestre}º trimestre</div>
     <div class="cabecera"><div><h1>Informe para la familia · ${esc(I.alumno_nombre)}</h1>
       <p class="sub">${I.trimestre}º trimestre · Curso ${esc(I.curso_escolar)}. Se guarda solo al escribir. Para dictar, pulsa 🎤 junto al cuadro (o haz clic en él y pulsa <strong>Windows + H</strong>).</p></div>
       <div class="acciones"><button class="primario" id="word-informe">📄 Exportar a Word</button></div></div>
@@ -1159,7 +1204,7 @@ async function vistaObservacion(id) {
   const O = OBS;
   const campo = (c, etiqueta, tipo = "text") => `<div><label>${etiqueta}</label><input type="${tipo}" data-tabla="informes_observacion" data-id="${O.id}" data-campo="${c}" value="${esc(O[c])}"></div>`;
   vista.innerHTML = `
-    <div class="migas"><a href="#/informes">Informes</a> › <a href="#/alumno/${O.alumno_id}">${esc(O.alumno_nombre)}</a> › Informe de observación</div>
+    <div class="migas"><a href="#/alumnos">Alumnos</a> › <a href="#/alumno/${O.alumno_id}">${esc(O.alumno_nombre)}</a> › Informe de observación</div>
     <div class="cabecera"><div><h1>🔍 Informe de observación · ${esc(O.alumno_nombre)}</h1>
       <p class="sub">Cómo se muestra en las sesiones. Se guarda solo al escribir. Para dictar, pulsa 🎤 junto al cuadro (o <strong>Windows + H</strong>). Los apartados vacíos no salen en el Word.</p></div>
       <div class="acciones"><button class="primario" id="word-obs">📄 Exportar a Word</button></div></div>
@@ -2535,10 +2580,13 @@ async function buscarActualizacion(manual) {
 let GUARDAR_JUNTA = null;
 window.addEventListener("hashchange", () => { if (GUARDAR_JUNTA) GUARDAR_JUNTA(); });
 
-async function vistaJuntas(tri) {
+async function vistaJuntas(tri, alumnoId) {
   const trimestre = tri ? +tri : (+leerPref("junta.trimestre", "0") || 1);
   guardarPref("junta.trimestre", String(trimestre));
   const J = await api("GET", `/api/juntas?trimestre=${trimestre}`);
+  const solo = alumnoId ? J.alumnos.find((a) => String(a.alumno_id) === String(alumnoId)) : null;
+  if (alumnoId && !solo) throw new Error("Ese alumno no está en tu perfil.");
+  if (solo) J.alumnos = [solo];
   const conNotas = (a) => (a.notas || "").trim();
   const enlaceInforme = (a) => a.informe ? `<a class="boton" href="#/${a.informe.tipo === "observacion" ? "observacion" : "informe"}/${a.informe.id}">Abrir ${a.informe.tipo === "observacion" ? "informe de observación" : "informe"}</a>` : "";
   const tarjeta = (a) => `<div class="tarjeta junta-alumno" id="ja-${a.alumno_id}">
@@ -2553,19 +2601,23 @@ async function vistaJuntas(tri) {
       <div class="fila" style="gap:8px;margin-top:8px;flex-wrap:wrap">
         <button class="primario" data-redactar="${a.alumno_id}">✨ Redactar para el informe del ${trimestre}º trimestre</button>
         ${enlaceInforme(a)}</div></div>`;
+  const enlaceTri = (t) => solo ? `#/juntas/${t}/${solo.alumno_id}` : `#/juntas/${t}`;
   vista.innerHTML = `
-    <div class="cabecera"><div><h1>Juntas de evaluación</h1>
+    <div class="migas"><a href="#/alumnos">Alumnos</a> › ${solo ? `<a href="#/alumno/${solo.alumno_id}">${esc(solo.nombre)}</a> › Junta de evaluación`
+      : "Junta de evaluación de todos"}</div>
+    <div class="cabecera"><div><h1>${solo ? `Junta de evaluación · ${esc(solo.nombre)}` : "Juntas de evaluación"}</h1>
       <p class="sub">Apunta o dicta lo que se diga de cada alumno durante la junta. Después, con <strong>✨ Redactar</strong>,
         tus notas se convierten en un borrador más profesional, repartido por los apartados del informe del trimestre, que revisas antes de pasarlo.</p></div>
-      <div class="acciones">${selectorVista(String(trimestre), [1, 2, 3].map((t) => [String(t), `${t}º trimestre`, `#/juntas/${t}`]))}</div></div>
+      <div class="acciones">${selectorVista(String(trimestre), [1, 2, 3].map((t) => [String(t), `${t}º trimestre`, enlaceTri(t)]))}</div></div>
     <div class="tarjeta"><div class="campos">
         <div><label>Fecha de la junta</label><input type="date" id="j-fecha" value="${esc(J.fecha || "")}"></div>
         <div><label>Curso escolar</label><input value="${esc(J.curso_escolar)}" disabled></div></div>
-      <details style="margin-top:10px" ${(J.notas || "").trim() ? "open" : ""}><summary><strong>Notas generales de la junta</strong> <span class="muted">(acuerdos, fechas de entrega, cosas que no son de un alumno)</span></summary>
+      ${solo ? `<p class="muted" style="margin:10px 0 0">Solo ves a ${esc(solo.nombre)}. <a href="#/juntas/${trimestre}">Ver la junta con todos los alumnos y las notas generales</a></p>` : ""}
+      <details style="margin-top:10px" ${(J.notas || "").trim() ? "open" : ""} ${solo ? "hidden" : ""}><summary><strong>Notas generales de la junta</strong> <span class="muted">(acuerdos, fechas de entrega, cosas que no son de un alumno)</span></summary>
         <div class="notas-sesion" style="margin-top:8px"><textarea id="j-notas" data-micro-lineas rows="3">${esc(J.notas || "")}</textarea>${botonMicro("j-notas")}</div></details></div>
     ${J.alumnos.length ? `<div class="ayuda">Escribe una idea por línea (por ejemplo «la tutora dice que participa más en la asamblea»). Se guarda sola mientras escribes.
         El borrador nunca da nada por <strong>conseguido</strong>: eso solo sale de los ítems evaluados con C en la ACI.</div>
-      <div class="junta-indice">${J.alumnos.map((a) => `<a href="#" data-ir="${a.alumno_id}" class="chip ${conNotas(a) ? "" : "vacia"}" id="ji-${a.alumno_id}">${conNotas(a) ? "✔ " : ""}${esc(a.nombre)}</a>`).join("")}</div>
+      ${solo ? "" : `<div class="junta-indice">${J.alumnos.map((a) => `<a href="#" data-ir="${a.alumno_id}" class="chip ${conNotas(a) ? "" : "vacia"}" id="ji-${a.alumno_id}">${conNotas(a) ? "✔ " : ""}${esc(a.nombre)}</a>`).join("")}</div>`}
       ${J.alumnos.map(tarjeta).join("")}`
       : `<div class="vacio">Todavía no tienes alumnos en tu perfil.</div>`}`;
   enlazarMicros(vista);
